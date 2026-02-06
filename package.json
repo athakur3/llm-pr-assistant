@@ -1,0 +1,157 @@
+{
+  "name": "llm-pr-assistant",
+  "displayName": "LLM PR Assistant",
+  "description": "Generate code changes from a prompt, commit, and open a PR.",
+  "version": "0.0.6",
+  "publisher": "athakur3",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/athakur3/llm-pr-assistant"
+  },
+  "bugs": {
+    "url": "https://github.com/athakur3/llm-pr-assistant/issues"
+  },
+  "homepage": "https://github.com/athakur3/llm-pr-assistant#readme",
+  "license": "MIT",
+  "keywords": [
+    "llm",
+    "git",
+    "github",
+    "pull-request",
+    "productivity"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "llmPrAssistant.generatePr",
+        "title": "LLM PR Assistant: Generate PR from Prompt"
+      },
+      {
+        "command": "llmPrAssistant.setApiKey",
+        "title": "LLM PR Assistant: Set Anthropic API Key"
+      },
+      {
+        "command": "llmPrAssistant.loginGithub",
+        "title": "LLM PR Assistant: Sign In to GitHub"
+      },
+      {
+        "command": "llmPrAssistant.setup",
+        "title": "LLM PR Assistant: Quick Setup"
+      },
+      {
+        "command": "llmPrAssistant.openChat",
+        "title": "LLM PR Assistant: Open Chat"
+      },
+      {
+        "command": "llmPrAssistant.selectModel",
+        "title": "LLM PR Assistant: Select Claude Model"
+      }
+    ],
+    "configuration": {
+      "title": "LLM PR Assistant",
+      "properties": {
+        "llmPrAssistant.llmProvider": {
+          "type": "string",
+          "default": "claude",
+          "enum": [
+            "claude",
+            "openai",
+            "ollama"
+          ],
+          "description": "Which LLM provider to use for code generation."
+        },
+        "llmPrAssistant.claudeModel": {
+          "type": "string",
+          "default": "claude-3-5-sonnet-latest",
+          "description": "Claude model name for Anthropic API."
+        },
+        "llmPrAssistant.gitProvider": {
+          "type": "string",
+          "default": "github",
+          "enum": [
+            "github",
+            "gitlab"
+          ],
+          "description": "Git hosting provider to create PRs."
+        },
+        "llmPrAssistant.repo": {
+          "type": "string",
+          "default": "",
+          "description": "Repository slug like org/repo for PR creation."
+        },
+        "llmPrAssistant.githubToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub personal access token with repo scope (optional if using Sign In to GitHub)."
+        },
+        "llmPrAssistant.baseBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Base branch to target when creating PRs."
+        },
+        "llmPrAssistant.qdrantPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to local Qdrant binary."
+        },
+        "llmPrAssistant.qdrantConfigPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to Qdrant config file."
+        },
+        "llmPrAssistant.qdrantHost": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Qdrant host."
+        },
+        "llmPrAssistant.qdrantPort": {
+          "type": "number",
+          "default": 6333,
+          "description": "Qdrant HTTP port."
+        },
+        "llmPrAssistant.qdrantDataDir": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Qdrant storage directory."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "build": "npm run compile && node scripts/build.js",
+    "watch": "tsc -w -p ./",
+    "vscode:prepublish": "npm run build",
+    "prepublishOnly": "npm run build",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "publish:vscode": "node scripts/publish.js vscode",
+    "publish:ovsx": "node scripts/publish.js ovsx"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.10",
+    "@types/vscode": "^1.85.0",
+    "@types/adm-zip": "^0.5.5",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.4.2",
+    "@vscode/vsce": "^2.25.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.28.0",
+    "@octokit/rest": "^21.0.0",
+    "adm-zip": "^0.5.10",
+    "tar": "^7.2.0"
+  }
+}
+
