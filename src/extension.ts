@@ -28,6 +28,7 @@ import {
   stripCodeFences,
 } from "./patch";
 import { classifyTaskSizing, extractRequestedCount } from "./prompt";
+import { formatCharCount } from "./progress";
 import { createPullRequest } from "./github";
 import {
   ClaudePlanStep,
@@ -176,6 +177,18 @@ function getWorkspaceRoot(): string | null {
 function logStep(output: vscode.OutputChannel, message: string) {
   const timestamp = new Date().toISOString();
   output.appendLine(`[${timestamp}] ${message}`);
+}
+
+function makeStreamTick(
+  output: vscode.OutputChannel,
+  notify: ((message: string) => void) | undefined,
+  label: string
+): (charsReceived: number) => void {
+  return (charsReceived: number) => {
+    const message = `${label}: ${formatCharCount(charsReceived)} received`;
+    logStep(output, message);
+    notify?.(message);
+  };
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -501,6 +514,7 @@ async function runGeneratePrompt(
             contextText,
             repoRoot,
             output,
+            notify,
             stepLabel: "single-shot",
             allowEmpty: false,
           });
@@ -697,8 +711,9 @@ async function regeneratePatchWithFreshFileContext(params: {
   prompt: string;
   repoRoot: string;
   originalPatch: string;
+  onTick?: (charsReceived: number) => void;
 }): Promise<string | null> {
-  const { apiKey, model, prompt, repoRoot, originalPatch } = params;
+  const { apiKey, model, prompt, repoRoot, originalPatch, onTick } = params;
   const filePath =
     extractPrimaryFilePath(originalPatch) ?? extractFilePathFromPrompt(prompt);
   if (!filePath) {
@@ -723,6 +738,7 @@ async function regeneratePatchWithFreshFileContext(params: {
     model,
     prompt,
     context: focusedContext,
+    onTick,
   });
 
   const normalized = ensureTrailingNewline(ensureDiffGitHeader(retryPatch));
@@ -745,8 +761,10 @@ async function createFileFromClaudeIfMissing(params: {
   contextText: string;
   repoRoot: string;
   originalPatch: string;
+  onTick?: (charsReceived: number) => void;
 }): Promise<boolean> {
-  const { apiKey, model, prompt, contextText, repoRoot, originalPatch } = params;
+  const { apiKey, model, prompt, contextText, repoRoot, originalPatch, onTick } =
+    params;
   const filePath =
     extractPrimaryFilePath(originalPatch) ?? extractFilePathFromPrompt(prompt);
   if (!filePath) {
@@ -766,6 +784,7 @@ async function createFileFromClaudeIfMissing(params: {
     prompt: `Create the full contents for ${filePath}.`,
     context: contextText,
     filePath,
+    onTick,
   });
   if (!content.trim()) {
     return false;
@@ -782,8 +801,10 @@ async function replaceFileFromClaudeOnFailure(params: {
   contextText: string;
   repoRoot: string;
   originalPatch: string;
+  onTick?: (charsReceived: number) => void;
 }): Promise<boolean> {
-  const { apiKey, model, prompt, contextText, repoRoot, originalPatch } = params;
+  const { apiKey, model, prompt, contextText, repoRoot, originalPatch, onTick } =
+    params;
   const filePath =
     extractPrimaryFilePath(originalPatch) ?? extractFilePathFromPrompt(prompt);
   if (!filePath) {
@@ -809,6 +830,7 @@ async function replaceFileFromClaudeOnFailure(params: {
     prompt,
     context: focusedContext,
     filePath,
+    onTick,
   });
   if (!content.trim()) {
     return false;
@@ -839,6 +861,7 @@ async function applyPatchFromClaude(params: {
   contextText: string;
   repoRoot: string;
   output: vscode.OutputChannel;
+  notify?: (message: string) => void;
   stepLabel: string;
   allowEmpty: boolean;
 }): Promise<void> {
@@ -848,15 +871,19 @@ async function applyPatchFromClaude(params: {
     prompt,
     contextText,
     repoRoot,
+    output,
+    notify,
     stepLabel,
     allowEmpty,
   } = params;
+  const onTick = makeStreamTick(output, notify, `Calling Claude (${stepLabel})`);
 
   const patch = await generatePatchWithClaude({
     apiKey,
     model,
     prompt,
     context: contextText,
+    onTick,
   });
   const normalizedPatch = await normalizePatchForNewFile(
     ensureTrailingNewline(ensureDiffGitHeader(patch)),
@@ -906,6 +933,7 @@ async function applyPatchFromClaude(params: {
       contextText,
       repoRoot,
       originalPatch: normalizedPatch,
+      onTick,
     });
     if (created) {
       await safeUnlink(patchPath);
@@ -941,6 +969,7 @@ async function applyPatchFromClaude(params: {
         prompt,
         repoRoot,
         originalPatch: normalizedPatch,
+        onTick,
       });
       if (refreshed) {
         try {
@@ -960,6 +989,7 @@ async function applyPatchFromClaude(params: {
         contextText,
         repoRoot,
         originalPatch: normalizedPatch,
+        onTick,
       });
       if (created) {
         await safeUnlink(patchPath);
@@ -972,6 +1002,7 @@ async function applyPatchFromClaude(params: {
         contextText,
         repoRoot,
         originalPatch: normalizedPatch,
+        onTick,
       });
       if (replaced) {
         await safeUnlink(patchPath);
@@ -1026,6 +1057,7 @@ async function runPlanExecute(params: {
     maxSteps,
     targetCount,
     existingFiles,
+    onTick: makeStreamTick(output, notify, "Planning"),
   });
   if (!plan.length) {
     throw new Error("Failed to generate execution plan.");
@@ -1054,6 +1086,7 @@ async function runPlanExecute(params: {
       contextText,
       repoRoot,
       output,
+      notify,
       stepLabel: `step-${i + 1}`,
       allowEmpty: true,
     });

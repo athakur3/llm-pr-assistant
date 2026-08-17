@@ -2,12 +2,16 @@ import Anthropic from "@anthropic-ai/sdk";
 import * as https from "node:https";
 import { extractUnifiedDiff } from "../patch";
 import { parsePlanJson, PlanStep } from "../prompt";
+import { createTickGate } from "../progress";
+
+const STREAM_TICK_THRESHOLD_CHARS = 400;
 
 type ClaudeRequest = {
   apiKey: string;
   model: string;
   prompt: string;
   context: string;
+  onTick?: (charsReceived: number) => void;
 };
 
 type ClaudePlanRequest = ClaudeRequest & {
@@ -31,6 +35,7 @@ export async function generatePatchWithClaude({
   model,
   prompt,
   context,
+  onTick,
 }: ClaudeRequest): Promise<string> {
   const client = new Anthropic({ apiKey });
 
@@ -44,12 +49,16 @@ export async function generatePatchWithClaude({
     `Context:\n${truncate(context, 12000)}\n\n` +
     "Output:";
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 16000,
-    system,
-    messages: [{ role: "user", content: user }],
-  });
+  const response = await streamMessage(
+    client,
+    {
+      model,
+      max_tokens: 64000,
+      system,
+      messages: [{ role: "user", content: user }],
+    },
+    onTick
+  );
 
   const text = response.content
     .filter((item) => item.type === "text")
@@ -67,6 +76,7 @@ export async function generatePlanWithClaude({
   maxSteps = 6,
   targetCount,
   existingFiles,
+  onTick,
 }: ClaudePlanRequest): Promise<ClaudePlanStep[]> {
   const client = new Anthropic({ apiKey });
 
@@ -99,12 +109,16 @@ export async function generatePlanWithClaude({
     "- Each instruction should be specific and scoped\n\n" +
     "Output:";
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 8000,
-    system,
-    messages: [{ role: "user", content: user }],
-  });
+  const response = await streamMessage(
+    client,
+    {
+      model,
+      max_tokens: 8000,
+      system,
+      messages: [{ role: "user", content: user }],
+    },
+    onTick
+  );
 
   const text = response.content
     .filter((item) => item.type === "text")
@@ -125,6 +139,7 @@ export async function generateFileContentWithClaude({
   prompt,
   context,
   filePath,
+  onTick,
 }: ClaudeFileRequest): Promise<string> {
   const client = new Anthropic({ apiKey });
 
@@ -138,12 +153,16 @@ export async function generateFileContentWithClaude({
     `Context:\n${truncate(context, 6000)}\n\n` +
     "Output:";
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 16000,
-    system,
-    messages: [{ role: "user", content: user }],
-  });
+  const response = await streamMessage(
+    client,
+    {
+      model,
+      max_tokens: 64000,
+      system,
+      messages: [{ role: "user", content: user }],
+    },
+    onTick
+  );
 
   const text = response.content
     .filter((item) => item.type === "text")
@@ -158,6 +177,25 @@ export async function listClaudeModels(apiKey: string): Promise<string[]> {
   const response = await fetchClaudeModels(apiKey);
   const models = response?.data?.map((item) => item.id).filter(Boolean) ?? [];
   return models as string[];
+}
+
+async function streamMessage(
+  client: Anthropic,
+  params: Anthropic.MessageStreamParams,
+  onTick?: (charsReceived: number) => void
+): Promise<Anthropic.Message> {
+  const stream = client.messages.stream(params);
+
+  if (onTick) {
+    const shouldTick = createTickGate(STREAM_TICK_THRESHOLD_CHARS);
+    stream.on("text", (_delta, snapshot) => {
+      if (shouldTick(snapshot.length)) {
+        onTick(snapshot.length);
+      }
+    });
+  }
+
+  return stream.finalMessage();
 }
 
 function truncate(value: string, maxLength: number): string {
