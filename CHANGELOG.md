@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.7
+
+- Fix: the default Claude model (`claude-3-5-sonnet-latest`) was retired upstream,
+  so "Generate PR from Prompt" failed with a 404 for anyone who never picked a
+  model manually. The default is now `claude-opus-5`.
+- Remove the `temperature` parameter from Claude calls; current models reject it.
+- Raise response token limits so larger patches are no longer truncated.
+- Fix packaging failure caused by a duplicate license file.
+- Internal: first unit test suite, F5 debug loop, simplified esbuild-only build.
+
 ## 0.0.1
 
 - Initial scaffold with Claude + GitHub PR flow.
