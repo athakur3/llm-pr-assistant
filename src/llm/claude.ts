@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import * as https from "node:https";
+import { extractUnifiedDiff } from "../patch";
+import { parsePlanJson, PlanStep } from "../prompt";
 
 type ClaudeRequest = {
   apiKey: string;
@@ -14,10 +16,7 @@ type ClaudePlanRequest = ClaudeRequest & {
   existingFiles?: string[];
 };
 
-export type ClaudePlanStep = {
-  title: string;
-  instruction: string;
-};
+export type ClaudePlanStep = PlanStep;
 
 type ClaudeFileRequest = ClaudeRequest & {
   filePath: string;
@@ -167,51 +166,6 @@ function truncate(value: string, maxLength: number): string {
   }
 
   return `${value.slice(0, maxLength)}\n...truncated...`;
-}
-
-function extractUnifiedDiff(raw: string): string {
-  const cleaned = raw
-    .replace(/```[\s\S]*?```/g, (match) =>
-      match.replace(/```/g, "")
-    )
-    .trim();
-
-  const diffIndex = cleaned.indexOf("diff --git ");
-  if (diffIndex >= 0) {
-    return cleaned.slice(diffIndex).trim();
-  }
-
-  const altIndex = cleaned.search(/^---\s+/m);
-  if (altIndex >= 0) {
-    return cleaned.slice(altIndex).trim();
-  }
-
-  return cleaned.trim();
-}
-
-function parsePlanJson(raw: string): ClaudePlanStep[] {
-  const cleaned = raw.replace(/```[\s\S]*?```/g, (match) =>
-    match.replace(/```/g, "")
-  );
-  const start = cleaned.indexOf("[");
-  const end = cleaned.lastIndexOf("]");
-  const candidate =
-    start >= 0 && end >= start ? cleaned.slice(start, end + 1) : cleaned;
-
-  try {
-    const data = JSON.parse(candidate);
-    if (!Array.isArray(data)) {
-      return [];
-    }
-    return data
-      .map((item) => ({
-        title: String(item?.title ?? "").trim(),
-        instruction: String(item?.instruction ?? "").trim(),
-      }))
-      .filter((item) => item.title && item.instruction);
-  } catch {
-    return [];
-  }
 }
 
 async function fetchClaudeModels(

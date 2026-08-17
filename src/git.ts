@@ -5,6 +5,42 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+export function buildBranchName(): string {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    "-",
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join("");
+  return `llm/pr-${stamp}`;
+}
+
+export function isRepoSlug(value: string): boolean {
+  return /^[^/]+\/[^/]+$/.test(value);
+}
+
+export function parseGithubSlug(remoteUrl: string): string | null {
+  const httpsMatch = remoteUrl.match(
+    /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/
+  );
+  if (httpsMatch) {
+    return `${httpsMatch[1]}/${httpsMatch[2]}`;
+  }
+
+  const sshMatch = remoteUrl.match(
+    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/
+  );
+  if (sshMatch) {
+    return `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  return null;
+}
+
 export async function runGit(
   args: string[],
   cwd: string,

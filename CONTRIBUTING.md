@@ -25,6 +25,18 @@ npm run dev
 npm run typecheck
 ```
 
+## Test
+
+```bash
+npm test
+```
+
+Unit tests live in `tests/` and run on Node's built-in test runner with native
+TypeScript type stripping — no test framework dependency. This needs Node 23.6+
+(Node 24 recommended). The pure logic under test lives in `src/patch.ts`,
+`src/prompt.ts`, and `src/git.ts`; keep new pure helpers in those modules so
+they stay testable without a VS Code host.
+
 ## Build and package
 
 ```bash

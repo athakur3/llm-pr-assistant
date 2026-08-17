@@ -3,6 +3,7 @@
 **/*.vsix
 out/**
 src/**
+tests/**
 scripts/**
 docs/**
 CONTRIBUTING.md

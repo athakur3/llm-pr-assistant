@@ -7,14 +7,27 @@ import { buildContext } from "./context";
 import {
   applyPatch,
   applyPatchThreeWay,
+  buildBranchName,
   commitAll,
   createBranch,
   ensureClean,
   ensureGitRepo,
+  isRepoSlug,
+  parseGithubSlug,
   pushBranch,
   pushBranchWithToken,
   runGit,
 } from "./git";
+import {
+  ensureDiffGitHeader,
+  ensureTrailingNewline,
+  extractFilePathFromPrompt,
+  extractNewFileContentFromPatch,
+  extractPrimaryFilePath,
+  isNewFilePatch,
+  stripCodeFences,
+} from "./patch";
+import { classifyTaskSizing, extractRequestedCount } from "./prompt";
 import { createPullRequest } from "./github";
 import {
   ClaudePlanStep,
@@ -163,20 +176,6 @@ function getWorkspaceRoot(): string | null {
 function logStep(output: vscode.OutputChannel, message: string) {
   const timestamp = new Date().toISOString();
   output.appendLine(`[${timestamp}] ${message}`);
-}
-
-function buildBranchName(): string {
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-    "-",
-    String(now.getHours()).padStart(2, "0"),
-    String(now.getMinutes()).padStart(2, "0"),
-    String(now.getSeconds()).padStart(2, "0"),
-  ].join("");
-  return `llm/pr-${stamp}`;
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -585,211 +584,6 @@ async function runGeneratePrompt(
   return { prUrl, summary };
 }
 
-type TaskExecutionTier = "TIER_1" | "TIER_2" | "TIER_3";
-
-function classifyTaskSizing(
-  prompt: string,
-  contextText: string
-): TaskExecutionTier {
-  const lower = prompt.toLowerCase();
-  const count = extractRequestedCount(lower);
-  const promptLength = prompt.length;
-  const contextSize = contextText.length;
-  const hasScopeSignals =
-    /all|every|each|across|compare|generate|create|add|migrate|refactor|update|implement|replace/.test(
-      lower
-    );
-
-  let score = 0;
-  if (promptLength > 600) score += 2;
-  else if (promptLength > 300) score += 1;
-
-  if (contextSize > 200_000) score += 2;
-  else if (contextSize > 100_000) score += 1;
-
-  if (count >= 20) score += 3;
-  else if (count >= 8) score += 2;
-  else if (count >= 4) score += 2;
-
-  if (hasScopeSignals) score += 1;
-
-  if (score >= 5) return "TIER_3";
-  if (score >= 3) return "TIER_2";
-  return "TIER_1";
-}
-
-function extractRequestedCount(text: string): number {
-  const matches = text.match(/\b\d{1,3}\b/g);
-  let maxValue = 0;
-  if (matches) {
-    maxValue = Math.max(...matches.map((value) => Number(value)));
-  }
-
-  const words = text
-    .replace(/[^a-z\s-]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-  const map: Record<string, number> = {
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-    seven: 7,
-    eight: 8,
-    nine: 9,
-    ten: 10,
-    eleven: 11,
-    twelve: 12,
-    thirteen: 13,
-    fourteen: 14,
-    fifteen: 15,
-    sixteen: 16,
-    seventeen: 17,
-    eighteen: 18,
-    nineteen: 19,
-    twenty: 20,
-    thirty: 30,
-    forty: 40,
-    fifty: 50,
-  };
-
-  for (let i = 0; i < words.length; i += 1) {
-    const token = words[i];
-    if (token.includes("-")) {
-      const parts = token.split("-");
-      const base = map[parts[0]];
-      const next = map[parts[1]];
-      if (base && next && next < 10) {
-        maxValue = Math.max(maxValue, base + next);
-        continue;
-      }
-    }
-    const value = map[token] ?? map[findClosestNumberWord(token, map, 2)];
-    if (value) {
-      let total = value;
-      if (value >= 20 && value % 10 === 0 && i + 1 < words.length) {
-        const next = map[words[i + 1]];
-        if (next && next < 10) {
-          total = value + next;
-        }
-      }
-      maxValue = Math.max(maxValue, total);
-    }
-  }
-
-  return maxValue;
-}
-
-function findClosestNumberWord(
-  token: string,
-  map: Record<string, number>,
-  maxDistance: number
-): string {
-  let best = "";
-  let bestDistance = maxDistance + 1;
-  for (const word of Object.keys(map)) {
-    const distance = levenshteinDistance(token, word);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = word;
-    }
-  }
-  return bestDistance <= maxDistance ? best : "";
-}
-
-function levenshteinDistance(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a) return b.length;
-  if (!b) return a.length;
-
-  const prev = new Array(b.length + 1).fill(0);
-  const next = new Array(b.length + 1).fill(0);
-  for (let j = 0; j <= b.length; j += 1) {
-    prev[j] = j;
-  }
-  for (let i = 0; i < a.length; i += 1) {
-    next[0] = i + 1;
-    for (let j = 0; j < b.length; j += 1) {
-      const cost = a[i] === b[j] ? 0 : 1;
-      next[j + 1] = Math.min(
-        prev[j + 1] + 1,
-        next[j] + 1,
-        prev[j] + cost
-      );
-    }
-    for (let j = 0; j <= b.length; j += 1) {
-      prev[j] = next[j];
-    }
-  }
-  return prev[b.length];
-}
-
-function ensureDiffGitHeader(patch: string): string {
-  if (patch.includes("diff --git ")) {
-    return patch;
-  }
-  const lines = patch.split(/\r?\n/);
-  const oldIndex = lines.findIndex((line) => line.startsWith("--- "));
-  const newIndex = lines.findIndex((line) => line.startsWith("+++ "));
-  if (oldIndex < 0 || newIndex < 0) {
-    return patch;
-  }
-
-  const oldPath = lines[oldIndex].slice(4).trim();
-  const newPath = lines[newIndex].slice(4).trim();
-  const cleanOld = oldPath.replace(/^a\//, "");
-  const cleanNew = newPath.replace(/^b\//, "");
-  const aPath = oldPath === "/dev/null" ? cleanNew : cleanOld;
-  const bPath = newPath === "/dev/null" ? cleanOld : cleanNew;
-
-  const header: string[] = [`diff --git a/${aPath} b/${bPath}`];
-  if (oldPath === "/dev/null") {
-    header.push("new file mode 100644");
-  } else if (newPath === "/dev/null") {
-    header.push("deleted file mode 100644");
-  }
-
-  return [...header, ...lines].join("\n");
-}
-
-function ensureTrailingNewline(patch: string): string {
-  if (!patch) {
-    return patch;
-  }
-  return patch.endsWith("\n") ? patch : `${patch}\n`;
-}
-
-function extractNewFileContentFromPatch(patch: string): string | null {
-  if (!isNewFilePatch(patch)) {
-    return null;
-  }
-  const lines = patch.split(/\r?\n/);
-  const content: string[] = [];
-  let inHunk = false;
-  for (const line of lines) {
-    if (line.startsWith("@@")) {
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk) {
-      continue;
-    }
-    if (line.startsWith("+++")) {
-      continue;
-    }
-    if (line.startsWith("+")) {
-      content.push(line.slice(1));
-    }
-  }
-  return content.length ? content.join("\n") : null;
-}
-
-function isNewFilePatch(patch: string): boolean {
-  return patch.includes("--- /dev/null") || /@@\s+-0,0\s+\+\d/.test(patch);
-}
-
 async function isMissingFile(repoRoot: string, filePath: string): Promise<boolean> {
   try {
     await fs.stat(path.join(repoRoot, filePath));
@@ -817,15 +611,6 @@ async function writeFileFromNonPatchResponse(params: {
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
   await fs.writeFile(fullPath, `${content}\n`, "utf8");
   return true;
-}
-
-function extractFilePathFromPrompt(prompt: string): string | null {
-  const match = prompt.match(/([a-zA-Z0-9_./-]+\.(?:js|ts|tsx|jsx|py|java|go|rb|rs|cpp|c|h|md|json|yaml|yml))/);
-  return match?.[1] ?? null;
-}
-
-function stripCodeFences(text: string): string {
-  return text.replace(/```[\s\S]*?```/g, (match) => match.replace(/```/g, ""));
 }
 
 async function normalizePatchForNewFile(
@@ -942,18 +727,6 @@ async function regeneratePatchWithFreshFileContext(params: {
 
   const normalized = ensureTrailingNewline(ensureDiffGitHeader(retryPatch));
   return normalized.trim() ? normalized : null;
-}
-
-function extractPrimaryFilePath(patch: string): string | null {
-  const plusMatch = patch.match(/^\+\+\+\s+b\/(.+)$/m);
-  if (plusMatch?.[1]) {
-    return plusMatch[1].trim() || null;
-  }
-  const diffMatch = patch.match(/^diff --git a\/(.+)\s+b\/(.+)$/m);
-  if (diffMatch?.[2]) {
-    return diffMatch[2].trim() || null;
-  }
-  return null;
 }
 
 async function listRepoFiles(repoRoot: string): Promise<string[]> {
@@ -1975,10 +1748,6 @@ async function getSetupStatus(
   };
 }
 
-function isRepoSlug(value: string): boolean {
-  return /^[^/]+\/[^/]+$/.test(value);
-}
-
 async function setRepoSlug(value: string): Promise<void> {
   const config = vscode.workspace.getConfiguration("llmPrAssistant");
   await config.update(
@@ -2116,24 +1885,6 @@ async function detectRepoSlug(repoRoot: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-function parseGithubSlug(remoteUrl: string): string | null {
-  const httpsMatch = remoteUrl.match(
-    /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/
-  );
-  if (httpsMatch) {
-    return `${httpsMatch[1]}/${httpsMatch[2]}`;
-  }
-
-  const sshMatch = remoteUrl.match(
-    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/
-  );
-  if (sshMatch) {
-    return `${sshMatch[1]}/${sshMatch[2]}`;
-  }
-
-  return null;
 }
 
 async function detectBaseBranch(repoRoot: string): Promise<string | null> {
