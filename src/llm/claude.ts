@@ -47,8 +47,7 @@ export async function generatePatchWithClaude({
 
   const response = await client.messages.create({
     model,
-    max_tokens: 3000,
-    temperature: 0.2,
+    max_tokens: 16000,
     system,
     messages: [{ role: "user", content: user }],
   });
@@ -103,8 +102,7 @@ export async function generatePlanWithClaude({
 
   const response = await client.messages.create({
     model,
-    max_tokens: 800,
-    temperature: 0.2,
+    max_tokens: 8000,
     system,
     messages: [{ role: "user", content: user }],
   });
@@ -143,8 +141,7 @@ export async function generateFileContentWithClaude({
 
   const response = await client.messages.create({
     model,
-    max_tokens: 3000,
-    temperature: 0.2,
+    max_tokens: 16000,
     system,
     messages: [{ role: "user", content: user }],
   });

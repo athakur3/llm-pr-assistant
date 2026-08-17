@@ -449,8 +449,7 @@ async function runGeneratePrompt(
 
       const apiKey = await getApiKey(context);
       const claudeModel =
-        config.get<string>("claudeModel")?.trim() ??
-        "claude-3-5-sonnet-latest";
+        config.get<string>("claudeModel")?.trim() ?? "claude-opus-5";
       const githubToken = await getGithubToken(
         context,
         GITHUB_DEVICE_CLIENT_ID,
@@ -2192,7 +2191,7 @@ function toUserErrorMessage(error: unknown): string {
   if (raw.includes("model:") || raw.includes("not_found_error")) {
     return (
       "Claude model not available. Set a valid model in settings " +
-      "(llmPrAssistant.claudeModel) or use 'claude-3-5-sonnet-latest'."
+      "(llmPrAssistant.claudeModel) or use 'claude-opus-5'."
     );
   }
 

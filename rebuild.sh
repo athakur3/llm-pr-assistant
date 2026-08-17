@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
 
-rm -rf out     
-npm run compile
+rm -rf dist
+npm run typecheck
 npm run package

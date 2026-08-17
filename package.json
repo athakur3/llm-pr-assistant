@@ -73,7 +73,7 @@
         },
         "llmPrAssistant.claudeModel": {
           "type": "string",
-          "default": "claude-3-5-sonnet-latest",
+          "default": "claude-opus-5",
           "description": "Claude model name for Anthropic API."
         },
         "llmPrAssistant.gitProvider": {
@@ -129,11 +129,13 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "build": "npm run compile && node scripts/build.js",
-    "watch": "tsc -w -p ./",
-    "vscode:prepublish": "npm run build",
-    "prepublishOnly": "npm run build",
+    "typecheck": "tsc -p ./ --noEmit",
+    "compile": "npm run typecheck",
+    "build": "node scripts/build.js",
+    "dev": "node scripts/build.js --dev --watch",
+    "watch": "npm run dev",
+    "vscode:prepublish": "npm run typecheck && npm run build",
+    "prepublishOnly": "npm run typecheck && npm run build",
     "package": "vsce package",
     "publish": "vsce publish",
     "publish:vscode": "node scripts/publish.js vscode",
