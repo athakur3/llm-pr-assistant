@@ -74,3 +74,10 @@ test("parsePlanJson returns [] for non-arrays and invalid JSON", () => {
   assert.deepEqual(parsePlanJson('{"title": "not an array"}'), []);
   assert.deepEqual(parsePlanJson("total garbage"), []);
 });
+
+test("parsePlanJson unwraps a steps array nested in a JSON object", () => {
+  const raw = '{"steps": [{"title": "Step 1", "instruction": "Do the thing"}]}';
+  assert.deepEqual(parsePlanJson(raw), [
+    { title: "Step 1", instruction: "Do the thing" },
+  ]);
+});

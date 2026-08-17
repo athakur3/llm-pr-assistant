@@ -22,6 +22,26 @@ type ClaudePlanRequest = ClaudeRequest & {
 
 export type ClaudePlanStep = PlanStep;
 
+const PLAN_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          instruction: { type: "string" },
+        },
+        required: ["title", "instruction"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["steps"],
+  additionalProperties: false,
+} as const;
+
 type ClaudeFileRequest = ClaudeRequest & {
   filePath: string;
 };
@@ -80,10 +100,7 @@ export async function generatePlanWithClaude({
 }: ClaudePlanRequest): Promise<ClaudePlanStep[]> {
   const client = new Anthropic({ apiKey });
 
-  const system =
-    "Return ONLY valid JSON. " +
-    "Output a JSON array of steps, each with {\"title\": string, \"instruction\": string}. " +
-    "No markdown, no code fences, no extra text.";
+  const system = "Generate an execution plan as a list of steps.";
 
   const countHint =
     targetCount && targetCount > 0
@@ -116,6 +133,9 @@ export async function generatePlanWithClaude({
       max_tokens: 8000,
       system,
       messages: [{ role: "user", content: user }],
+      output_config: {
+        format: { type: "json_schema", schema: PLAN_JSON_SCHEMA },
+      },
     },
     onTick
   );
