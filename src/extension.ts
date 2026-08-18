@@ -5,19 +5,23 @@ import { URLSearchParams } from "node:url";
 import * as vscode from "vscode";
 import { buildContext } from "./context";
 import {
+  abandonBranch,
   applyPatch,
   applyPatchThreeWay,
   buildBranchName,
   commitAll,
   createBranch,
+  discardBranchChanges,
   ensureClean,
   ensureGitRepo,
+  getCurrentBranch,
   isRepoSlug,
   parseGithubSlug,
   pushBranch,
   pushBranchWithToken,
   runGit,
 } from "./git";
+import { buildDiffPreviewSummary, listChangedFiles } from "./diffPreview";
 import {
   ensureDiffGitHeader,
   ensureTrailingNewline,
@@ -172,7 +176,11 @@ export function activate(context: vscode.ExtensionContext) {
     selectModelDisposable,
     openChatDisposable,
     statusBar,
-    output
+    output,
+    vscode.workspace.registerTextDocumentContentProvider(
+      ORIGINAL_CONTENT_SCHEME,
+      new OriginalContentProvider()
+    )
   );
 }
 
@@ -213,6 +221,60 @@ function makeUsageLogger(
       )}`
     );
   };
+}
+
+const ORIGINAL_CONTENT_SCHEME = "llm-pr-assistant-original";
+
+class OriginalContentProvider implements vscode.TextDocumentContentProvider {
+  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+    const params = new URLSearchParams(uri.query);
+    const repoRoot = params.get("repoRoot") ?? "";
+    const filePath = params.get("filePath") ?? "";
+    if (!repoRoot || !filePath) {
+      return "";
+    }
+    try {
+      return await runGit(["show", `HEAD:${filePath}`], repoRoot);
+    } catch {
+      return "";
+    }
+  }
+}
+
+function buildOriginalContentUri(
+  repoRoot: string,
+  filePath: string
+): vscode.Uri {
+  const query = new URLSearchParams({ repoRoot, filePath }).toString();
+  return vscode.Uri.parse(
+    `${ORIGINAL_CONTENT_SCHEME}:/${encodeURIComponent(filePath)}?${query}`
+  );
+}
+
+async function openDiffPreview(
+  repoRoot: string,
+  changedFiles: string[]
+): Promise<void> {
+  for (const filePath of changedFiles) {
+    const originalUri = buildOriginalContentUri(repoRoot, filePath);
+    const modifiedUri = vscode.Uri.file(path.join(repoRoot, filePath));
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      originalUri,
+      modifiedUri,
+      `${filePath} (LLM PR Assistant)`,
+      { preview: false }
+    );
+  }
+}
+
+async function confirmApplyChanges(changedFiles: string[]): Promise<boolean> {
+  const choice = await vscode.window.showInformationMessage(
+    buildDiffPreviewSummary(changedFiles),
+    { modal: true },
+    "Apply & Create PR"
+  );
+  return choice === "Apply & Create PR";
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -517,6 +579,7 @@ async function runGeneratePrompt(
       const repoRoot = await ensureGitRepo(workspaceRoot);
       await ensureClean(repoRoot);
 
+      const originalBranch = await getCurrentBranch(repoRoot);
       const branchName = buildBranchName();
       logStep(output, `Creating branch ${branchName}`);
       notify?.("Creating a new branch...");
@@ -591,6 +654,22 @@ async function runGeneratePrompt(
       notify?.("Summarizing changes...");
       progress.report({ message: "Summarizing changes" });
       summary = await buildChangeSummary(repoRoot);
+
+      logStep(output, "Preparing diff preview");
+      notify?.("Preparing diff preview...");
+      progress.report({ message: "Preparing diff preview" });
+      const changedFiles = await listChangedFiles(repoRoot);
+      if (changedFiles.length > 0) {
+        await openDiffPreview(repoRoot, changedFiles);
+        const approved = await confirmApplyChanges(changedFiles);
+        if (!approved) {
+          logStep(output, "Changes declined; discarding branch");
+          notify?.("Changes declined. Discarding...");
+          await discardBranchChanges(repoRoot);
+          await abandonBranch(repoRoot, originalBranch, branchName);
+          throw new Error("Changes were not approved.");
+        }
+      }
 
       logStep(output, "Committing");
       notify?.("Committing changes...");
@@ -2102,6 +2181,13 @@ function toUserErrorMessage(error: unknown): string {
     return (
       "The model response wasn't a patch. Try rephrasing the request or " +
       "narrowing the scope."
+    );
+  }
+
+  if (raw.includes("Changes were not approved")) {
+    return (
+      "Changes were declined in the diff preview. Nothing was committed, " +
+      "pushed, or opened as a PR."
     );
   }
 

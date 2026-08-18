@@ -162,6 +162,20 @@ export async function getCurrentBranch(repoRoot: string): Promise<string> {
   return runGit(["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
 }
 
+export async function discardBranchChanges(repoRoot: string): Promise<void> {
+  await runGit(["reset", "--hard", "HEAD"], repoRoot);
+  await runGit(["clean", "-fd", "-e", ".vscode"], repoRoot);
+}
+
+export async function abandonBranch(
+  repoRoot: string,
+  originalBranch: string,
+  branchName: string
+): Promise<void> {
+  await runGit(["checkout", originalBranch], repoRoot);
+  await runGit(["branch", "-D", branchName], repoRoot);
+}
+
 function getExecErrorMessage(error: unknown): string {
   if (!error || typeof error !== "object") {
     return String(error);
