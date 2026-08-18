@@ -18,11 +18,11 @@ jobs:
     name: test / typecheck / build / package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Node 23.6+ is required: the test suite runs on Node's built-in test
       # runner with native TypeScript type stripping (see CONTRIBUTING.md).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: npm
