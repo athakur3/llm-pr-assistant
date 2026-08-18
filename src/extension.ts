@@ -1,4 +1,3 @@
-import * as fs from "node:fs/promises";
 import * as https from "node:https";
 import * as path from "node:path";
 import { URLSearchParams } from "node:url";
@@ -6,8 +5,6 @@ import * as vscode from "vscode";
 import { buildContext } from "./context";
 import {
   abandonBranch,
-  applyPatch,
-  applyPatchThreeWay,
   buildBranchName,
   commitAll,
   createBranch,
@@ -22,15 +19,6 @@ import {
   runGit,
 } from "./git";
 import { buildDiffPreviewSummary, listChangedFiles } from "./diffPreview";
-import {
-  ensureDiffGitHeader,
-  ensureTrailingNewline,
-  extractFilePathFromPrompt,
-  extractNewFileContentFromPatch,
-  extractPrimaryFilePath,
-  isNewFilePatch,
-  stripCodeFences,
-} from "./patch";
 import { classifyTaskSizing, extractRequestedCount } from "./prompt";
 import { formatCacheUsage, formatCharCount } from "./progress";
 import { createPullRequest } from "./github";
@@ -38,11 +26,10 @@ import {
   CacheUsage,
   ClaudeEffort,
   ClaudePlanStep,
-  generateFileContentWithClaude,
-  generatePatchWithClaude,
   generatePlanWithClaude,
   listClaudeModels,
 } from "./llm/claude";
+import { runFileEditingToolLoop } from "./llm/tools";
 import { ensureQdrantBinary, getQdrantStatus, startQdrant } from "./rag/qdrant";
 
 const CLAUDE_EFFORT_LEVELS: ClaudeEffort[] = [
@@ -282,21 +269,6 @@ function truncate(value: string, maxLength: number): string {
     return value;
   }
   return `${value.slice(0, maxLength - 3)}...`;
-}
-
-function isUnifiedDiff(text: string): boolean {
-  if (!text) {
-    return false;
-  }
-  return text.includes("diff --git ") || text.includes("--- ");
-}
-
-async function safeUnlink(filePath: string): Promise<void> {
-  try {
-    await fs.unlink(filePath);
-  } catch {
-    // Ignore missing file cleanup errors.
-  }
 }
 
 async function getApiKey(
@@ -710,166 +682,6 @@ async function runGeneratePrompt(
   return { prUrl, summary };
 }
 
-async function isMissingFile(repoRoot: string, filePath: string): Promise<boolean> {
-  try {
-    await fs.stat(path.join(repoRoot, filePath));
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-async function writeFileFromNonPatchResponse(params: {
-  prompt: string;
-  repoRoot: string;
-  content: string;
-}): Promise<boolean> {
-  const { prompt, repoRoot } = params;
-  const content = stripCodeFences(params.content).trim();
-  if (!content) {
-    return false;
-  }
-  const target = extractFilePathFromPrompt(prompt);
-  if (!target) {
-    return false;
-  }
-  const fullPath = path.join(repoRoot, target);
-  await fs.mkdir(path.dirname(fullPath), { recursive: true });
-  await fs.writeFile(fullPath, `${content}\n`, "utf8");
-  return true;
-}
-
-async function normalizePatchForNewFile(
-  patch: string,
-  repoRoot: string
-): Promise<string> {
-  const filePath = extractPrimaryFilePath(patch);
-  if (!filePath) {
-    return patch;
-  }
-  const fullPath = path.join(repoRoot, filePath);
-  let exists = false;
-  try {
-    await fs.stat(fullPath);
-    exists = true;
-  } catch {
-    exists = false;
-  }
-  if (exists) {
-    return patch;
-  }
-  if (patch.includes("/dev/null")) {
-    return patch;
-  }
-
-  const lines = patch.split(/\r?\n/);
-  const rewritten = lines
-    .map((line) => {
-      if (line.startsWith("--- a/")) {
-        return "--- /dev/null";
-      }
-      return line;
-    })
-    .flatMap((line, index) => {
-      if (index === 0 && line.startsWith("diff --git ")) {
-        return [line, "new file mode 100644"];
-      }
-      return [line];
-    })
-    .join("\n");
-
-  return ensureTrailingNewline(rewritten);
-}
-
-async function rewriteNewFilePatchForExistingFile(
-  patch: string,
-  repoRoot: string
-): Promise<string | null> {
-  if (!patch.includes("new file mode")) {
-    return null;
-  }
-  const newPathMatch = patch.match(/^\+\+\+\s+b\/(.+)$/m);
-  if (!newPathMatch) {
-    return null;
-  }
-  const filePath = newPathMatch[1].trim();
-  if (!filePath) {
-    return null;
-  }
-  const fullPath = path.join(repoRoot, filePath);
-  try {
-    await fs.stat(fullPath);
-  } catch {
-    return null;
-  }
-
-  const lines = patch.split(/\r?\n/);
-  const rewritten = lines
-    .filter((line) => line !== "new file mode 100644")
-    .map((line) => {
-      if (line.startsWith("--- /dev/null")) {
-        return `--- a/${filePath}`;
-      }
-      return line;
-    })
-    .join("\n");
-
-  return ensureTrailingNewline(rewritten);
-}
-
-async function regeneratePatchWithFreshFileContext(params: {
-  apiKey: string;
-  model: string;
-  effort?: ClaudeEffort;
-  prompt: string;
-  repoRoot: string;
-  originalPatch: string;
-  onTick?: (charsReceived: number) => void;
-  onUsage?: (usage: CacheUsage) => void;
-}): Promise<string | null> {
-  const {
-    apiKey,
-    model,
-    effort,
-    prompt,
-    repoRoot,
-    originalPatch,
-    onTick,
-    onUsage,
-  } = params;
-  const filePath =
-    extractPrimaryFilePath(originalPatch) ?? extractFilePathFromPrompt(prompt);
-  if (!filePath) {
-    return null;
-  }
-  const fullPath = path.join(repoRoot, filePath);
-  let fileContent = "";
-  try {
-    fileContent = await fs.readFile(fullPath, "utf8");
-  } catch {
-    return null;
-  }
-
-  const focusedContext =
-    `File: ${filePath}\n` +
-    "Current contents:\n" +
-    fileContent +
-    "\n\nOnly modify this file. Output a unified diff.";
-
-  const retryPatch = await generatePatchWithClaude({
-    apiKey,
-    model,
-    effort,
-    prompt,
-    context: focusedContext,
-    onTick,
-    onUsage,
-  });
-
-  const normalized = ensureTrailingNewline(ensureDiffGitHeader(retryPatch));
-  return normalized.trim() ? normalized : null;
-}
-
 async function listRepoFiles(repoRoot: string): Promise<string[]> {
   try {
     const files = await runGit(["ls-files"], repoRoot);
@@ -877,117 +689,6 @@ async function listRepoFiles(repoRoot: string): Promise<string[]> {
   } catch {
     return [];
   }
-}
-
-async function createFileFromClaudeIfMissing(params: {
-  apiKey: string;
-  model: string;
-  effort?: ClaudeEffort;
-  prompt: string;
-  contextText: string;
-  repoRoot: string;
-  originalPatch: string;
-  onTick?: (charsReceived: number) => void;
-  onUsage?: (usage: CacheUsage) => void;
-}): Promise<boolean> {
-  const {
-    apiKey,
-    model,
-    effort,
-    prompt,
-    contextText,
-    repoRoot,
-    originalPatch,
-    onTick,
-    onUsage,
-  } = params;
-  const filePath =
-    extractPrimaryFilePath(originalPatch) ?? extractFilePathFromPrompt(prompt);
-  if (!filePath) {
-    return false;
-  }
-  const fullPath = path.join(repoRoot, filePath);
-  try {
-    await fs.stat(fullPath);
-    return false;
-  } catch {
-    // continue
-  }
-
-  const content = await generateFileContentWithClaude({
-    apiKey,
-    model,
-    effort,
-    prompt: `Create the full contents for ${filePath}.`,
-    context: contextText,
-    filePath,
-    onTick,
-    onUsage,
-  });
-  if (!content.trim()) {
-    return false;
-  }
-  await fs.mkdir(path.dirname(fullPath), { recursive: true });
-  await fs.writeFile(fullPath, `${content}\n`, "utf8");
-  return true;
-}
-
-async function replaceFileFromClaudeOnFailure(params: {
-  apiKey: string;
-  model: string;
-  effort?: ClaudeEffort;
-  prompt: string;
-  contextText: string;
-  repoRoot: string;
-  originalPatch: string;
-  onTick?: (charsReceived: number) => void;
-  onUsage?: (usage: CacheUsage) => void;
-}): Promise<boolean> {
-  const {
-    apiKey,
-    model,
-    effort,
-    prompt,
-    contextText,
-    repoRoot,
-    originalPatch,
-    onTick,
-    onUsage,
-  } = params;
-  const filePath =
-    extractPrimaryFilePath(originalPatch) ?? extractFilePathFromPrompt(prompt);
-  if (!filePath) {
-    return false;
-  }
-  const fullPath = path.join(repoRoot, filePath);
-  let existing = "";
-  try {
-    existing = await fs.readFile(fullPath, "utf8");
-  } catch {
-    return false;
-  }
-
-  const focusedContext =
-    `File: ${filePath}\n` +
-    "Current contents:\n" +
-    existing +
-    "\n\nReturn the full updated file contents.";
-
-  const content = await generateFileContentWithClaude({
-    apiKey,
-    model,
-    effort,
-    prompt,
-    context: focusedContext,
-    filePath,
-    onTick,
-    onUsage,
-  });
-  if (!content.trim()) {
-    return false;
-  }
-  await fs.writeFile(fullPath, `${content}\n`, "utf8");
-  return true;
 }
 
 function buildStepPrompt(
@@ -1004,6 +705,14 @@ function buildStepPrompt(
     "Do not repeat previous steps."
   );
 }
+
+const TOOL_LOOP_SYSTEM_PROMPT =
+  "You are editing files in a git repository on the user's behalf. " +
+  "Use the list_files, read_file, and write_file tools to inspect and modify " +
+  "the repository directly — never output diffs or file contents as chat text. " +
+  "Make only the changes required by the task below; prefer editing an existing " +
+  "file over creating a new one unless the task asks for a new file. " +
+  "Reply with a brief summary once you are done.";
 
 async function applyPatchFromClaude(params: {
   apiKey: string;
@@ -1029,159 +738,27 @@ async function applyPatchFromClaude(params: {
     stepLabel,
     allowEmpty,
   } = params;
-  const onTick = makeStreamTick(output, notify, `Calling Claude (${stepLabel})`);
-  const onUsage = makeUsageLogger(output, `Calling Claude (${stepLabel})`);
 
-  const patch = await generatePatchWithClaude({
+  logStep(output, `Calling Claude (${stepLabel})`);
+  notify?.(`Calling Claude (${stepLabel})...`);
+
+  const beforeChanged = new Set(await listChangedFiles(repoRoot));
+
+  await runFileEditingToolLoop({
     apiKey,
     model,
     effort,
-    prompt,
-    context: contextText,
-    onTick,
-    onUsage,
+    system: TOOL_LOOP_SYSTEM_PROMPT,
+    prompt: `Context:\n${truncate(contextText, 12000)}\n\nTask:\n${prompt}`,
+    repoRoot,
   });
-  const normalizedPatch = await normalizePatchForNewFile(
-    ensureTrailingNewline(ensureDiffGitHeader(patch)),
-    repoRoot
-  );
 
-  if (!normalizedPatch.trim()) {
-    if (allowEmpty) {
-      return;
-    }
-    throw new Error("Model response was not a patch.");
-  }
+  logStep(output, `Claude finished (${stepLabel})`);
 
-  if (!isUnifiedDiff(normalizedPatch)) {
-    const wrote = await writeFileFromNonPatchResponse({
-      prompt,
-      repoRoot,
-      content: normalizedPatch,
-    });
-    if (wrote) {
-      return;
-    }
-    throw new Error("Model response was not a patch.");
-  }
-
-  const patchPath = path.join(repoRoot, `.llm-pr-assistant.${stepLabel}.patch`);
-  await fs.writeFile(patchPath, normalizedPatch, "utf8");
-  const primaryFile = extractPrimaryFilePath(normalizedPatch);
-  if (primaryFile && (await isMissingFile(repoRoot, primaryFile))) {
-    const contentFromPatch = extractNewFileContentFromPatch(normalizedPatch);
-    if (contentFromPatch) {
-      await fs.mkdir(path.dirname(path.join(repoRoot, primaryFile)), {
-        recursive: true,
-      });
-      await fs.writeFile(
-        path.join(repoRoot, primaryFile),
-        ensureTrailingNewline(contentFromPatch),
-        "utf8"
-      );
-      await safeUnlink(patchPath);
-      return;
-    }
-    const created = await createFileFromClaudeIfMissing({
-      apiKey,
-      model,
-      effort,
-      prompt,
-      contextText,
-      repoRoot,
-      originalPatch: normalizedPatch,
-      onTick,
-      onUsage,
-    });
-    if (created) {
-      await safeUnlink(patchPath);
-      return;
-    }
-  }
-  try {
-    await validatePatch(repoRoot, patchPath);
-    await applyPatch(repoRoot, patchPath);
-    await safeUnlink(patchPath);
-  } catch (error) {
-    const details = error instanceof Error ? error.message : String(error ?? "");
-    const rewritten = await rewriteNewFilePatchForExistingFile(
-      normalizedPatch,
-      repoRoot
-    );
-    if (rewritten) {
-      await fs.writeFile(patchPath, rewritten, "utf8");
-      await validatePatch(repoRoot, patchPath);
-      await applyPatch(repoRoot, patchPath);
-      await safeUnlink(patchPath);
-      return;
-    }
-
-    try {
-      await applyPatchThreeWay(repoRoot, patchPath);
-      await safeUnlink(patchPath);
-      return;
-    } catch (threeWayError) {
-      const refreshed = await regeneratePatchWithFreshFileContext({
-        apiKey,
-        model,
-        effort,
-        prompt,
-        repoRoot,
-        originalPatch: normalizedPatch,
-        onTick,
-        onUsage,
-      });
-      if (refreshed) {
-        try {
-          await fs.writeFile(patchPath, refreshed, "utf8");
-          await validatePatch(repoRoot, patchPath);
-          await applyPatch(repoRoot, patchPath);
-          await safeUnlink(patchPath);
-          return;
-        } catch {
-          // Fall through to file creation/replace fallback.
-        }
-      }
-      const created = await createFileFromClaudeIfMissing({
-        apiKey,
-        model,
-        prompt,
-        contextText,
-        repoRoot,
-        originalPatch: normalizedPatch,
-        onTick,
-        onUsage,
-      });
-      if (created) {
-        await safeUnlink(patchPath);
-        return;
-      }
-      const replaced = await replaceFileFromClaudeOnFailure({
-        apiKey,
-        model,
-        effort,
-        prompt,
-        contextText,
-        repoRoot,
-        originalPatch: normalizedPatch,
-        onTick,
-        onUsage,
-      });
-      if (replaced) {
-        await safeUnlink(patchPath);
-        return;
-      }
-      const threeWayDetails =
-        threeWayError instanceof Error
-          ? threeWayError.message
-          : String(threeWayError ?? "");
-      throw new Error(
-        "The model returned an invalid patch. " +
-          `We saved it to ${patchPath}.\n` +
-          details +
-          (threeWayDetails ? `\n${threeWayDetails}` : "")
-      );
-    }
+  const afterChanged = await listChangedFiles(repoRoot);
+  const madeChanges = afterChanged.some((file) => !beforeChanged.has(file));
+  if (!madeChanges && !allowEmpty) {
+    throw new Error("Model made no file changes.");
   }
 }
 
@@ -1266,10 +843,7 @@ async function runPlanExecute(params: {
 
 function shouldFallbackToPlan(error: unknown): boolean {
   const raw = error instanceof Error ? error.message : String(error ?? "");
-  return (
-    raw.includes("Model response was not a patch") ||
-    raw.includes("The model returned an invalid patch")
-  );
+  return raw.includes("Model made no file changes");
 }
 
 async function selectClaudeModel(
@@ -2101,13 +1675,6 @@ async function detectBaseBranch(repoRoot: string): Promise<string | null> {
   }
 }
 
-async function validatePatch(
-  repoRoot: string,
-  patchPath: string
-): Promise<void> {
-  await runGit(["apply", "--check", patchPath], repoRoot);
-}
-
 async function getOriginUrl(repoRoot: string): Promise<string | null> {
   try {
     return await runGit(["remote", "get-url", "origin"], repoRoot);
@@ -2177,10 +1744,10 @@ function toUserErrorMessage(error: unknown): string {
     return "Could not plan the task. Try a smaller scope or run again.";
   }
 
-  if (raw.includes("Model response was not a patch")) {
+  if (raw.includes("Model made no file changes")) {
     return (
-      "The model response wasn't a patch. Try rephrasing the request or " +
-      "narrowing the scope."
+      "The model didn't make any file changes. Try rephrasing the request " +
+      "or narrowing the scope."
     );
   }
 

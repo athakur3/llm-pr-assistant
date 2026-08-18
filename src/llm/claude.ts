@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { extractUnifiedDiff } from "../patch";
 import { parsePlanJson, PlanStep } from "../prompt";
 import { createTickGate } from "../progress";
 
@@ -49,55 +48,6 @@ const PLAN_JSON_SCHEMA = {
   required: ["steps"],
   additionalProperties: false,
 } as const;
-
-type ClaudeFileRequest = ClaudeRequest & {
-  filePath: string;
-};
-
-export async function generatePatchWithClaude({
-  apiKey,
-  model,
-  prompt,
-  context,
-  effort,
-  onTick,
-  onUsage,
-}: ClaudeRequest): Promise<string> {
-  const client = new Anthropic({ apiKey });
-
-  const system =
-    "Return ONLY a unified diff patch that can be applied with git apply. " +
-    "Do not include explanations, markdown, or code fences. " +
-    "If no changes are needed, return an empty response.";
-
-  const response = await streamMessage(
-    client,
-    {
-      model,
-      max_tokens: 64000,
-      system,
-      messages: [
-        {
-          role: "user",
-          content: cachedUserContent(
-            `Context:\n${truncate(context, 12000)}`,
-            `Prompt:\n${prompt}\n\nOutput:`
-          ),
-        },
-      ],
-      ...(effort ? { output_config: { effort } } : {}),
-    },
-    onTick,
-    onUsage
-  );
-
-  const text = response.content
-    .filter((item) => item.type === "text")
-    .map((item) => item.text)
-    .join("");
-
-  return extractUnifiedDiff(text);
-}
 
 export async function generatePlanWithClaude({
   apiKey,
@@ -173,52 +123,6 @@ export async function generatePlanWithClaude({
     throw new Error("Failed to generate execution plan.");
   }
   return parsed;
-}
-
-export async function generateFileContentWithClaude({
-  apiKey,
-  model,
-  prompt,
-  context,
-  filePath,
-  effort,
-  onTick,
-  onUsage,
-}: ClaudeFileRequest): Promise<string> {
-  const client = new Anthropic({ apiKey });
-
-  const system =
-    "Return ONLY the full file contents. " +
-    "Do not include markdown, code fences, or explanations.";
-
-  const response = await streamMessage(
-    client,
-    {
-      model,
-      max_tokens: 64000,
-      system,
-      messages: [
-        {
-          role: "user",
-          content: cachedUserContent(
-            `Context:\n${truncate(context, 6000)}`,
-            `File path: ${filePath}\n\nTask:\n${prompt}\n\nOutput:`
-          ),
-        },
-      ],
-      ...(effort ? { output_config: { effort } } : {}),
-    },
-    onTick,
-    onUsage
-  );
-
-  const text = response.content
-    .filter((item) => item.type === "text")
-    .map((item) => item.text)
-    .join("")
-    .trim();
-
-  return text;
 }
 
 export async function listClaudeModels(apiKey: string): Promise<string[]> {

@@ -92,20 +92,6 @@ export async function createBranch(
   await runGit(["checkout", "-b", branchName], repoRoot);
 }
 
-export async function applyPatch(
-  repoRoot: string,
-  patchPath: string
-): Promise<void> {
-  await runGit(["apply", "--whitespace=fix", patchPath], repoRoot);
-}
-
-export async function applyPatchThreeWay(
-  repoRoot: string,
-  patchPath: string
-): Promise<void> {
-  await runGit(["apply", "--3way", "--whitespace=fix", patchPath], repoRoot);
-}
-
 export async function commitAll(
   repoRoot: string,
   message: string

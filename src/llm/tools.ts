@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaTool } from "@anthropic-ai/sdk/helpers/beta/json-schema";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { runGit } from "../git.ts";
+import type { ClaudeEffort } from "./claude.ts";
 
 const DEFAULT_MAX_ITERATIONS = 5;
 
@@ -108,6 +109,7 @@ export function createFileEditingTools(repoRoot: string): BetaRunnableTool[] {
 export type ToolLoopRequest = {
   apiKey: string;
   model: string;
+  effort?: ClaudeEffort;
   system: string;
   prompt: string;
   repoRoot: string;
@@ -117,6 +119,7 @@ export type ToolLoopRequest = {
 export async function runFileEditingToolLoop({
   apiKey,
   model,
+  effort,
   system,
   prompt,
   repoRoot,
@@ -126,11 +129,12 @@ export async function runFileEditingToolLoop({
 
   const runner = client.beta.messages.toolRunner({
     model,
-    max_tokens: 8000,
+    max_tokens: 16000,
     max_iterations: maxIterations,
     system,
     messages: [{ role: "user", content: prompt }],
     tools: createFileEditingTools(repoRoot),
+    ...(effort ? { output_config: { effort } } : {}),
   });
 
   const finalMessage = await runner.runUntilDone();

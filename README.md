@@ -19,6 +19,6 @@ Marketplace:
 - Chat onboarding for Anthropic + GitHub
 - Repo/base-branch auto-detection
 - Multi-step planning for larger tasks
-- Robust patch application with fallbacks
+- Model edits files directly via a capped tool-use loop (read/write/list), with a diff preview and Apply/Cancel gate before anything is committed
 
 
