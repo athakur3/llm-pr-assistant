@@ -21,8 +21,16 @@ const ovsxPublisher = process.env.OVSX_PUBLISHER || "athakur3";
 
 const targetPublisher = target === "vscode" ? vscodePublisher : ovsxPublisher;
 
-function run(command) {
-  execSync(command, { stdio: "inherit", cwd: root });
+function run(command, extraEnv) {
+  // Secrets go through the child's ENVIRONMENT, never through the command string.
+  // A token interpolated into `command` lands in argv, where any same-user process can
+  // read it out of `ps` for the whole life of the publish — and on this machine four
+  // autonomous loops run as the same user.
+  execSync(command, {
+    stdio: "inherit",
+    cwd: root,
+    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+  });
 }
 
 function writePackageJson(next) {
@@ -45,7 +53,10 @@ try {
     if (!process.env.OPEN_VSX_TOKEN) {
       throw new Error("Missing OPEN_VSX_TOKEN environment variable.");
     }
-    run(`npx ovsx publish ${vsixName} -p ${process.env.OPEN_VSX_TOKEN}`);
+    // ovsx reads OVSX_PAT from the environment (ovsx/lib/util.js: `options.pat ??
+    // (options.pat = process.env.OVSX_PAT)`), so the token never needs to appear as a
+    // `-p` argument. vsce already worked this way via VSCE_PAT; this makes ovsx match.
+    run(`npx ovsx publish ${vsixName}`, { OVSX_PAT: process.env.OPEN_VSX_TOKEN });
   }
 } catch (error) {
   console.error(error.message || String(error));
