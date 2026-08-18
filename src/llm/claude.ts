@@ -6,12 +6,18 @@ import { createTickGate } from "../progress";
 
 const STREAM_TICK_THRESHOLD_CHARS = 400;
 
+export type CacheUsage = {
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+};
+
 type ClaudeRequest = {
   apiKey: string;
   model: string;
   prompt: string;
   context: string;
   onTick?: (charsReceived: number) => void;
+  onUsage?: (usage: CacheUsage) => void;
 };
 
 type ClaudePlanRequest = ClaudeRequest & {
@@ -56,6 +62,7 @@ export async function generatePatchWithClaude({
   prompt,
   context,
   onTick,
+  onUsage,
 }: ClaudeRequest): Promise<string> {
   const client = new Anthropic({ apiKey });
 
@@ -64,20 +71,24 @@ export async function generatePatchWithClaude({
     "Do not include explanations, markdown, or code fences. " +
     "If no changes are needed, return an empty response.";
 
-  const user =
-    `Prompt:\n${prompt}\n\n` +
-    `Context:\n${truncate(context, 12000)}\n\n` +
-    "Output:";
-
   const response = await streamMessage(
     client,
     {
       model,
       max_tokens: 64000,
       system,
-      messages: [{ role: "user", content: user }],
+      messages: [
+        {
+          role: "user",
+          content: cachedUserContent(
+            `Context:\n${truncate(context, 12000)}`,
+            `Prompt:\n${prompt}\n\nOutput:`
+          ),
+        },
+      ],
     },
-    onTick
+    onTick,
+    onUsage
   );
 
   const text = response.content
@@ -97,6 +108,7 @@ export async function generatePlanWithClaude({
   targetCount,
   existingFiles,
   onTick,
+  onUsage,
 }: ClaudePlanRequest): Promise<ClaudePlanStep[]> {
   const client = new Anthropic({ apiKey });
 
@@ -113,9 +125,8 @@ export async function generatePlanWithClaude({
           2000
         )}\n\n`
       : "";
-  const user =
+  const taskBlock =
     `Task:\n${prompt}\n\n` +
-    `Context summary:\n${truncate(context, 6000)}\n\n` +
     existingHint +
     `Constraints:\n- Max steps: ${maxSteps}\n` +
     countHint +
@@ -132,12 +143,21 @@ export async function generatePlanWithClaude({
       model,
       max_tokens: 8000,
       system,
-      messages: [{ role: "user", content: user }],
+      messages: [
+        {
+          role: "user",
+          content: cachedUserContent(
+            `Context summary:\n${truncate(context, 6000)}`,
+            taskBlock
+          ),
+        },
+      ],
       output_config: {
         format: { type: "json_schema", schema: PLAN_JSON_SCHEMA },
       },
     },
-    onTick
+    onTick,
+    onUsage
   );
 
   const text = response.content
@@ -160,6 +180,7 @@ export async function generateFileContentWithClaude({
   context,
   filePath,
   onTick,
+  onUsage,
 }: ClaudeFileRequest): Promise<string> {
   const client = new Anthropic({ apiKey });
 
@@ -167,21 +188,24 @@ export async function generateFileContentWithClaude({
     "Return ONLY the full file contents. " +
     "Do not include markdown, code fences, or explanations.";
 
-  const user =
-    `File path: ${filePath}\n\n` +
-    `Task:\n${prompt}\n\n` +
-    `Context:\n${truncate(context, 6000)}\n\n` +
-    "Output:";
-
   const response = await streamMessage(
     client,
     {
       model,
       max_tokens: 64000,
       system,
-      messages: [{ role: "user", content: user }],
+      messages: [
+        {
+          role: "user",
+          content: cachedUserContent(
+            `Context:\n${truncate(context, 6000)}`,
+            `File path: ${filePath}\n\nTask:\n${prompt}\n\nOutput:`
+          ),
+        },
+      ],
     },
-    onTick
+    onTick,
+    onUsage
   );
 
   const text = response.content
@@ -199,10 +223,30 @@ export async function listClaudeModels(apiKey: string): Promise<string[]> {
   return models as string[];
 }
 
+/**
+ * Puts the stable repo-context block first (its own cached content entry)
+ * and the per-call task text after, so repeat calls against the same repo
+ * reuse the cached prefix (Anthropic requires an unbroken prefix match).
+ */
+function cachedUserContent(
+  contextBlock: string,
+  taskBlock: string
+): Anthropic.TextBlockParam[] {
+  return [
+    {
+      type: "text",
+      text: contextBlock,
+      cache_control: { type: "ephemeral" },
+    },
+    { type: "text", text: taskBlock },
+  ];
+}
+
 async function streamMessage(
   client: Anthropic,
   params: Anthropic.MessageStreamParams,
-  onTick?: (charsReceived: number) => void
+  onTick?: (charsReceived: number) => void,
+  onUsage?: (usage: CacheUsage) => void
 ): Promise<Anthropic.Message> {
   const stream = client.messages.stream(params);
 
@@ -215,7 +259,17 @@ async function streamMessage(
     });
   }
 
-  return stream.finalMessage();
+  const response = await stream.finalMessage();
+
+  if (onUsage) {
+    onUsage({
+      cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
+      cacheCreationInputTokens:
+        response.usage.cache_creation_input_tokens ?? 0,
+    });
+  }
+
+  return response;
 }
 
 function truncate(value: string, maxLength: number): string {

@@ -22,3 +22,20 @@ export function formatCharCount(chars: number): string {
   }
   return `${(chars / 1000).toFixed(1)}k chars`;
 }
+
+export function formatCacheUsage(
+  cacheReadTokens: number,
+  cacheCreationTokens: number
+): string {
+  if (!cacheReadTokens && !cacheCreationTokens) {
+    return "cache: none";
+  }
+  const parts: string[] = [];
+  if (cacheReadTokens) {
+    parts.push(`${cacheReadTokens} read`);
+  }
+  if (cacheCreationTokens) {
+    parts.push(`${cacheCreationTokens} written`);
+  }
+  return `cache: ${parts.join(", ")}`;
+}
