@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
@@ -107,25 +109,32 @@ export async function pushBranch(
   await runGit(["push", "-u", "origin", branchName], repoRoot);
 }
 
+const TOKEN_ENV_VAR = "LLM_PR_ASSISTANT_GIT_TOKEN";
+
 export async function pushBranchWithToken(
   repoRoot: string,
   branchName: string,
   token: string
 ): Promise<void> {
-  const askPassPath = path.join(repoRoot, ".llm-pr-assistant-askpass.sh");
+  // The helper script never contains the token itself — only a reference to
+  // the env var carrying it — and lives outside repoRoot, so a leftover file
+  // (crash before cleanup, another process reading it) exposes nothing.
+  const helperPath = path.join(
+    os.tmpdir(),
+    `llm-pr-assistant-credential-helper-${randomUUID()}.sh`
+  );
   const script = `#!/bin/sh
-case "$1" in
-  *Username*) echo "x-access-token" ;;
-  *Password*) echo "${token}" ;;
-  *) echo "" ;;
-esac
+if [ "$1" = "get" ]; then
+  echo "username=x-access-token"
+  echo "password=$${TOKEN_ENV_VAR}"
+fi
 `;
-  await fs.writeFile(askPassPath, script, { mode: 0o700 });
+  await fs.writeFile(helperPath, script, { mode: 0o700 });
   try {
     await runGit(
       [
         "-c",
-        "credential.helper=",
+        `credential.helper=${helperPath}`,
         "-c",
         "credential.useHttpPath=true",
         "push",
@@ -135,12 +144,12 @@ esac
       ],
       repoRoot,
       {
-        GIT_ASKPASS: askPassPath,
+        [TOKEN_ENV_VAR]: token,
         GIT_TERMINAL_PROMPT: "0",
       }
     );
   } finally {
-    await fs.unlink(askPassPath).catch(() => undefined);
+    await fs.unlink(helperPath).catch(() => undefined);
   }
 }
 

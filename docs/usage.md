@@ -23,7 +23,7 @@ Example prompts:
 ## Settings (advanced)
 
 - `llmPrAssistant.claudeModel`: Claude model name
-- `llmPrAssistant.githubToken`: GitHub token with repo scope (optional)
+- `llmPrAssistant.githubToken`: deprecated — use `LLM PR Assistant: Sign In to GitHub` instead. A token pasted here is moved into secure storage and cleared from settings on the next activation.
 - `llmPrAssistant.repo`: repository slug like `org/repo`
 - `llmPrAssistant.baseBranch`: base branch for PRs (default `main`)
 

@@ -105,7 +105,8 @@
         "llmPrAssistant.githubToken": {
           "type": "string",
           "default": "",
-          "description": "GitHub personal access token with repo scope (optional if using Sign In to GitHub)."
+          "description": "GitHub personal access token with repo scope (optional if using Sign In to GitHub).",
+          "deprecationMessage": "Deprecated: tokens set here are moved to secure storage automatically on activation and this setting is then cleared. Use \"Sign In to GitHub\" instead of pasting a token here."
         },
         "llmPrAssistant.baseBranch": {
           "type": "string",

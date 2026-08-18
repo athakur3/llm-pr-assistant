@@ -43,6 +43,8 @@ const GITHUB_DEVICE_CLIENT_ID = "Ov23lixQIJgRYTeNSsBp";
 let chatPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  void migrateGithubTokenSetting(context);
+
   const output = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
   const statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
@@ -291,6 +293,47 @@ async function getApiKey(
 
   await context.secrets.store("llmPrAssistant.anthropicApiKey", entered);
   return entered;
+}
+
+async function migrateGithubTokenSetting(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  const config = vscode.workspace.getConfiguration("llmPrAssistant");
+  const plaintextToken = config.get<string>("githubToken")?.trim() ?? "";
+  if (!plaintextToken) {
+    return;
+  }
+
+  if (!(await context.secrets.get("llmPrAssistant.githubToken"))) {
+    await context.secrets.store("llmPrAssistant.githubToken", plaintextToken);
+  }
+
+  const inspected = config.inspect<string>("githubToken");
+  if (inspected?.globalValue !== undefined) {
+    await config.update(
+      "githubToken",
+      undefined,
+      vscode.ConfigurationTarget.Global
+    );
+  }
+  if (inspected?.workspaceValue !== undefined) {
+    await config.update(
+      "githubToken",
+      undefined,
+      vscode.ConfigurationTarget.Workspace
+    );
+  }
+  if (inspected?.workspaceFolderValue !== undefined) {
+    await config.update(
+      "githubToken",
+      undefined,
+      vscode.ConfigurationTarget.WorkspaceFolder
+    );
+  }
+
+  vscode.window.showInformationMessage(
+    "Your GitHub token was moved from settings.json into secure storage, and the plaintext setting was cleared."
+  );
 }
 
 async function getGithubToken(
