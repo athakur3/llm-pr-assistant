@@ -61,16 +61,6 @@
     "configuration": {
       "title": "LLM PR Assistant",
       "properties": {
-        "llmPrAssistant.llmProvider": {
-          "type": "string",
-          "default": "claude",
-          "enum": [
-            "claude",
-            "openai",
-            "ollama"
-          ],
-          "description": "Which LLM provider to use for code generation."
-        },
         "llmPrAssistant.claudeModel": {
           "type": "string",
           "default": "claude-opus-5",
@@ -87,15 +77,6 @@
             "max"
           ],
           "description": "Reasoning effort for Claude calls (output_config.effort). Higher effort can improve quality at the cost of latency and tokens."
-        },
-        "llmPrAssistant.gitProvider": {
-          "type": "string",
-          "default": "github",
-          "enum": [
-            "github",
-            "gitlab"
-          ],
-          "description": "Git hosting provider to create PRs."
         },
         "llmPrAssistant.repo": {
           "type": "string",

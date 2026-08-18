@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Remove the `llmPrAssistant.llmProvider` and `llmPrAssistant.gitProvider` settings.
+  Neither was ever read by the extension (Claude and GitHub are the only providers
+  implemented), so both were no-ops regardless of what was selected.
+
 ## 0.0.7
 
 - Fix: the default Claude model (`claude-3-5-sonnet-latest`) was retired upstream,
