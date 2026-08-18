@@ -32,6 +32,7 @@ import { formatCacheUsage, formatCharCount } from "./progress";
 import { createPullRequest } from "./github";
 import {
   CacheUsage,
+  ClaudeEffort,
   ClaudePlanStep,
   generateFileContentWithClaude,
   generatePatchWithClaude,
@@ -40,6 +41,13 @@ import {
 } from "./llm/claude";
 import { ensureQdrantBinary, getQdrantStatus, startQdrant } from "./rag/qdrant";
 
+const CLAUDE_EFFORT_LEVELS: ClaudeEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 const OUTPUT_CHANNEL_NAME = "LLM PR Assistant";
 const GITHUB_DEVICE_CLIENT_ID = "Ov23lixQIJgRYTeNSsBp";
 let chatPanel: vscode.WebviewPanel | undefined;
@@ -478,6 +486,12 @@ async function runGeneratePrompt(
       const apiKey = await getApiKey(context);
       const claudeModel =
         config.get<string>("claudeModel")?.trim() ?? "claude-opus-5";
+      const configuredEffort = config.get<string>("effort")?.trim();
+      const claudeEffort: ClaudeEffort = (
+        CLAUDE_EFFORT_LEVELS as string[]
+      ).includes(configuredEffort ?? "")
+        ? (configuredEffort as ClaudeEffort)
+        : "high";
       const githubToken = await getGithubToken(
         context,
         GITHUB_DEVICE_CLIENT_ID,
@@ -526,6 +540,7 @@ async function runGeneratePrompt(
           await applyPatchFromClaude({
             apiKey,
             model: claudeModel,
+            effort: claudeEffort,
             prompt,
             contextText,
             repoRoot,
@@ -544,6 +559,7 @@ async function runGeneratePrompt(
           await runPlanExecute({
             apiKey,
             model: claudeModel,
+            effort: claudeEffort,
             prompt,
             contextText,
             repoRoot,
@@ -559,6 +575,7 @@ async function runGeneratePrompt(
         await runPlanExecute({
           apiKey,
           model: claudeModel,
+          effort: claudeEffort,
           prompt,
           contextText,
           repoRoot,
@@ -724,14 +741,23 @@ async function rewriteNewFilePatchForExistingFile(
 async function regeneratePatchWithFreshFileContext(params: {
   apiKey: string;
   model: string;
+  effort?: ClaudeEffort;
   prompt: string;
   repoRoot: string;
   originalPatch: string;
   onTick?: (charsReceived: number) => void;
   onUsage?: (usage: CacheUsage) => void;
 }): Promise<string | null> {
-  const { apiKey, model, prompt, repoRoot, originalPatch, onTick, onUsage } =
-    params;
+  const {
+    apiKey,
+    model,
+    effort,
+    prompt,
+    repoRoot,
+    originalPatch,
+    onTick,
+    onUsage,
+  } = params;
   const filePath =
     extractPrimaryFilePath(originalPatch) ?? extractFilePathFromPrompt(prompt);
   if (!filePath) {
@@ -754,6 +780,7 @@ async function regeneratePatchWithFreshFileContext(params: {
   const retryPatch = await generatePatchWithClaude({
     apiKey,
     model,
+    effort,
     prompt,
     context: focusedContext,
     onTick,
@@ -776,6 +803,7 @@ async function listRepoFiles(repoRoot: string): Promise<string[]> {
 async function createFileFromClaudeIfMissing(params: {
   apiKey: string;
   model: string;
+  effort?: ClaudeEffort;
   prompt: string;
   contextText: string;
   repoRoot: string;
@@ -786,6 +814,7 @@ async function createFileFromClaudeIfMissing(params: {
   const {
     apiKey,
     model,
+    effort,
     prompt,
     contextText,
     repoRoot,
@@ -809,6 +838,7 @@ async function createFileFromClaudeIfMissing(params: {
   const content = await generateFileContentWithClaude({
     apiKey,
     model,
+    effort,
     prompt: `Create the full contents for ${filePath}.`,
     context: contextText,
     filePath,
@@ -826,6 +856,7 @@ async function createFileFromClaudeIfMissing(params: {
 async function replaceFileFromClaudeOnFailure(params: {
   apiKey: string;
   model: string;
+  effort?: ClaudeEffort;
   prompt: string;
   contextText: string;
   repoRoot: string;
@@ -836,6 +867,7 @@ async function replaceFileFromClaudeOnFailure(params: {
   const {
     apiKey,
     model,
+    effort,
     prompt,
     contextText,
     repoRoot,
@@ -865,6 +897,7 @@ async function replaceFileFromClaudeOnFailure(params: {
   const content = await generateFileContentWithClaude({
     apiKey,
     model,
+    effort,
     prompt,
     context: focusedContext,
     filePath,
@@ -896,6 +929,7 @@ function buildStepPrompt(
 async function applyPatchFromClaude(params: {
   apiKey: string;
   model: string;
+  effort?: ClaudeEffort;
   prompt: string;
   contextText: string;
   repoRoot: string;
@@ -907,6 +941,7 @@ async function applyPatchFromClaude(params: {
   const {
     apiKey,
     model,
+    effort,
     prompt,
     contextText,
     repoRoot,
@@ -921,6 +956,7 @@ async function applyPatchFromClaude(params: {
   const patch = await generatePatchWithClaude({
     apiKey,
     model,
+    effort,
     prompt,
     context: contextText,
     onTick,
@@ -970,6 +1006,7 @@ async function applyPatchFromClaude(params: {
     const created = await createFileFromClaudeIfMissing({
       apiKey,
       model,
+      effort,
       prompt,
       contextText,
       repoRoot,
@@ -1008,6 +1045,7 @@ async function applyPatchFromClaude(params: {
       const refreshed = await regeneratePatchWithFreshFileContext({
         apiKey,
         model,
+        effort,
         prompt,
         repoRoot,
         originalPatch: normalizedPatch,
@@ -1042,6 +1080,7 @@ async function applyPatchFromClaude(params: {
       const replaced = await replaceFileFromClaudeOnFailure({
         apiKey,
         model,
+        effort,
         prompt,
         contextText,
         repoRoot,
@@ -1070,6 +1109,7 @@ async function applyPatchFromClaude(params: {
 async function runPlanExecute(params: {
   apiKey: string;
   model: string;
+  effort?: ClaudeEffort;
   prompt: string;
   contextText: string;
   repoRoot: string;
@@ -1082,6 +1122,7 @@ async function runPlanExecute(params: {
   const {
     apiKey,
     model,
+    effort,
     prompt,
     repoRoot,
     output,
@@ -1097,6 +1138,7 @@ async function runPlanExecute(params: {
   const plan = await generatePlanWithClaude({
     apiKey,
     model,
+    effort,
     prompt,
     context: contextText,
     maxSteps,
@@ -1128,6 +1170,7 @@ async function runPlanExecute(params: {
     await applyPatchFromClaude({
       apiKey,
       model,
+      effort,
       prompt: stepPrompt,
       contextText,
       repoRoot,
@@ -2059,6 +2102,13 @@ function toUserErrorMessage(error: unknown): string {
     return (
       "The model response wasn't a patch. Try rephrasing the request or " +
       "narrowing the scope."
+    );
+  }
+
+  if (raw.includes("declined to respond to this request (refusal)")) {
+    return (
+      "Claude declined to respond to this request. Try rephrasing or " +
+      "narrowing the prompt."
     );
   }
 

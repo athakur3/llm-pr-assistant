@@ -76,6 +76,18 @@
           "default": "claude-opus-5",
           "description": "Claude model name for Anthropic API."
         },
+        "llmPrAssistant.effort": {
+          "type": "string",
+          "default": "high",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "description": "Reasoning effort for Claude calls (output_config.effort). Higher effort can improve quality at the cost of latency and tokens."
+        },
         "llmPrAssistant.gitProvider": {
           "type": "string",
           "default": "github",

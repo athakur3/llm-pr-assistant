@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import * as https from "node:https";
 import { extractUnifiedDiff } from "../patch";
 import { parsePlanJson, PlanStep } from "../prompt";
 import { createTickGate } from "../progress";
@@ -11,11 +10,14 @@ export type CacheUsage = {
   cacheCreationInputTokens: number;
 };
 
+export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
 type ClaudeRequest = {
   apiKey: string;
   model: string;
   prompt: string;
   context: string;
+  effort?: ClaudeEffort;
   onTick?: (charsReceived: number) => void;
   onUsage?: (usage: CacheUsage) => void;
 };
@@ -52,15 +54,12 @@ type ClaudeFileRequest = ClaudeRequest & {
   filePath: string;
 };
 
-type ClaudeModelListResponse = {
-  data?: Array<{ id?: string }>;
-};
-
 export async function generatePatchWithClaude({
   apiKey,
   model,
   prompt,
   context,
+  effort,
   onTick,
   onUsage,
 }: ClaudeRequest): Promise<string> {
@@ -86,6 +85,7 @@ export async function generatePatchWithClaude({
           ),
         },
       ],
+      ...(effort ? { output_config: { effort } } : {}),
     },
     onTick,
     onUsage
@@ -107,6 +107,7 @@ export async function generatePlanWithClaude({
   maxSteps = 6,
   targetCount,
   existingFiles,
+  effort,
   onTick,
   onUsage,
 }: ClaudePlanRequest): Promise<ClaudePlanStep[]> {
@@ -154,6 +155,7 @@ export async function generatePlanWithClaude({
       ],
       output_config: {
         format: { type: "json_schema", schema: PLAN_JSON_SCHEMA },
+        ...(effort ? { effort } : {}),
       },
     },
     onTick,
@@ -179,6 +181,7 @@ export async function generateFileContentWithClaude({
   prompt,
   context,
   filePath,
+  effort,
   onTick,
   onUsage,
 }: ClaudeFileRequest): Promise<string> {
@@ -203,6 +206,7 @@ export async function generateFileContentWithClaude({
           ),
         },
       ],
+      ...(effort ? { output_config: { effort } } : {}),
     },
     onTick,
     onUsage
@@ -218,9 +222,12 @@ export async function generateFileContentWithClaude({
 }
 
 export async function listClaudeModels(apiKey: string): Promise<string[]> {
-  const response = await fetchClaudeModels(apiKey);
-  const models = response?.data?.map((item) => item.id).filter(Boolean) ?? [];
-  return models as string[];
+  const client = new Anthropic({ apiKey });
+  const models: string[] = [];
+  for await (const model of client.models.list()) {
+    models.push(model.id);
+  }
+  return models;
 }
 
 /**
@@ -261,6 +268,14 @@ async function streamMessage(
 
   const response = await stream.finalMessage();
 
+  if (response.stop_reason === "refusal") {
+    const explanation = response.stop_details?.explanation;
+    throw new Error(
+      "Claude declined to respond to this request (refusal)." +
+        (explanation ? ` ${explanation}` : "")
+    );
+  }
+
   if (onUsage) {
     onUsage({
       cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
@@ -278,38 +293,5 @@ function truncate(value: string, maxLength: number): string {
   }
 
   return `${value.slice(0, maxLength)}\n...truncated...`;
-}
-
-async function fetchClaudeModels(
-  apiKey: string
-): Promise<ClaudeModelListResponse> {
-  const responseText = await new Promise<string>((resolve, reject) => {
-    const request = https.request(
-      "https://api.anthropic.com/v1/models",
-      {
-        method: "GET",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
-      },
-      (response) => {
-        let data = "";
-        response.on("data", (chunk) => {
-          data += chunk;
-        });
-        response.on("end", () => resolve(data));
-      }
-    );
-    request.on("error", reject);
-    request.end();
-  });
-
-  try {
-    return JSON.parse(responseText) as ClaudeModelListResponse;
-  } catch {
-    return {};
-  }
 }
 
