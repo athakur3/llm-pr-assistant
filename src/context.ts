@@ -1,13 +1,20 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { runGit } from "./git";
+import { rankFilesByPrompt } from "./relevance";
 
-export async function buildContext(workspaceRoot: string): Promise<string> {
+const RELEVANT_FILE_LIMIT = 12;
+const RELEVANT_FILE_MAX_CHARS = 3000;
+
+export async function buildContext(
+  workspaceRoot: string,
+  prompt: string
+): Promise<string> {
   const sections: string[] = [];
 
-  const fileList = await getFileList(workspaceRoot);
+  const allFiles = await getAllFiles(workspaceRoot);
   sections.push("Tracked files (first 200):");
-  sections.push(fileList.join("\n") || "(no files)");
+  sections.push(allFiles.slice(0, 200).join("\n") || "(no files)");
 
   const readme = await readTextFile(workspaceRoot, "README.md", 4000);
   if (readme) {
@@ -21,13 +28,29 @@ export async function buildContext(workspaceRoot: string): Promise<string> {
     sections.push(packageJson);
   }
 
+  const relevantFiles = rankFilesByPrompt(allFiles, prompt, RELEVANT_FILE_LIMIT);
+  if (relevantFiles.length > 0) {
+    sections.push("\nFiles most relevant to the prompt:");
+    for (const file of relevantFiles) {
+      const content = await readTextFile(
+        workspaceRoot,
+        file,
+        RELEVANT_FILE_MAX_CHARS
+      );
+      if (content) {
+        sections.push(`\n${file}:`);
+        sections.push(content);
+      }
+    }
+  }
+
   return sections.join("\n");
 }
 
-async function getFileList(workspaceRoot: string): Promise<string[]> {
+async function getAllFiles(workspaceRoot: string): Promise<string[]> {
   try {
     const output = await runGit(["ls-files"], workspaceRoot);
-    return output.split("\n").filter(Boolean).slice(0, 200);
+    return output.split("\n").filter(Boolean);
   } catch {
     return [];
   }

@@ -26,10 +26,6 @@ Example prompts:
 - `llmPrAssistant.githubToken`: GitHub token with repo scope (optional)
 - `llmPrAssistant.repo`: repository slug like `org/repo`
 - `llmPrAssistant.baseBranch`: base branch for PRs (default `main`)
-- `llmPrAssistant.qdrantPath`: local Qdrant binary path (optional)
-- `llmPrAssistant.qdrantHost`: Qdrant host (default `127.0.0.1`)
-- `llmPrAssistant.qdrantPort`: Qdrant HTTP port (default `6333`)
-- `llmPrAssistant.qdrantDataDir`: Qdrant data directory (optional)
 
 ## Notes
 

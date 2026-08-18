@@ -30,7 +30,6 @@ import {
   listClaudeModels,
 } from "./llm/claude";
 import { runFileEditingToolLoop } from "./llm/tools";
-import { ensureQdrantBinary, getQdrantStatus, startQdrant } from "./rag/qdrant";
 
 const CLAUDE_EFFORT_LEVELS: ClaudeEffort[] = [
   "low",
@@ -53,8 +52,6 @@ export function activate(context: vscode.ExtensionContext) {
   statusBar.command = "llmPrAssistant.openChat";
   statusBar.tooltip = "Open LLM PR Assistant Chat";
   statusBar.show();
-
-  void startIndexerIfConfigured(context);
 
   const generateDisposable = vscode.commands.registerCommand(
     "llmPrAssistant.generatePr",
@@ -561,7 +558,7 @@ async function runGeneratePrompt(
       logStep(output, "Collecting code context");
       notify?.("Reading the codebase...");
       progress.report({ message: "Collecting code context" });
-      let contextText = await buildContext(repoRoot);
+      let contextText = await buildContext(repoRoot, prompt);
 
       const requestedCount = extractRequestedCount(prompt.toLowerCase());
       const executionTier = classifyTaskSizing(prompt, contextText);
@@ -837,7 +834,7 @@ async function runPlanExecute(params: {
     });
     logStep(output, "Refreshing context after step");
     notify?.("Refreshing context...");
-    contextText = await buildContext(repoRoot);
+    contextText = await buildContext(repoRoot, prompt);
   }
 }
 
@@ -984,15 +981,6 @@ function createChatPanel(
           panel.webview.postMessage({
             type: "assistant",
             text: "Anthropic API key saved.",
-          });
-          await postStatus();
-          return;
-        }
-
-        if (status.currentStep === "indexing") {
-          panel.webview.postMessage({
-            type: "assistant",
-            text: "Indexer is starting. Please wait a moment.",
           });
           await postStatus();
           return;
@@ -1295,13 +1283,6 @@ function getChatHtml(webview: vscode.Webview): string {
     function applyInputState(status) {
       const isReady = Boolean(status.isReady);
       const step = status.currentStep || "apiKey";
-      if (step === "indexing") {
-        prompt.placeholder =
-          "Teaching the assistant your codebase… no coffee spills";
-        prompt.disabled = true;
-        sendBtn.disabled = true;
-        return;
-      }
       if (step === "apiKey") {
         prompt.placeholder = "Drop your Anthropic API key here (I won't peek)";
         prompt.disabled = false;
@@ -1334,13 +1315,6 @@ function getChatHtml(webview: vscode.Webview): string {
     function renderActions(status) {
       const step = status.currentStep || "apiKey";
       actionsEl.innerHTML = "";
-      if (step === "indexing") {
-        const btn = document.createElement("button");
-        btn.textContent = "Indexer starting...";
-        btn.disabled = true;
-        actionsEl.appendChild(btn);
-        return;
-      }
       if (step === "github") {
         const btn = document.createElement("button");
         btn.className = "primary";
@@ -1412,12 +1386,6 @@ function getChatHtml(webview: vscode.Webview): string {
 
     function renderStatus(status) {
       const step = status.currentStep || "apiKey";
-      if (step === "indexing") {
-        statusEl.innerHTML =
-          "<strong>Indexing the repo</strong>" +
-          "<p>Setting up Qdrant to turn your requests into vertices — graph‑paper jokes included.</p>";
-        return;
-      }
       if (step === "apiKey") {
         statusEl.innerHTML =
           "<strong>Step 1: Feed me an Anthropic API key</strong>" +
@@ -1475,19 +1443,10 @@ async function getSetupStatus(
   hasGithub: boolean;
   hasRepo: boolean;
   hasBaseBranch: boolean;
-  hasIndexer: boolean;
-  currentStep:
-    | "indexing"
-    | "apiKey"
-    | "github"
-    | "repo"
-    | "baseBranch"
-    | "ready";
+  currentStep: "apiKey" | "github" | "repo" | "baseBranch" | "ready";
   isReady: boolean;
 }> {
   const config = vscode.workspace.getConfiguration("llmPrAssistant");
-  await startIndexerIfConfigured(context);
-  const hasIndexer = getQdrantStatus() === "running";
   const workspaceRoot = getWorkspaceRoot();
   if (workspaceRoot) {
     await detectAndPersistRepoAndBranch(context, workspaceRoot);
@@ -1501,25 +1460,22 @@ async function getSetupStatus(
   );
   const hasRepo = Boolean(config.get<string>("repo")?.trim());
   const hasBaseBranch = Boolean(config.get<string>("baseBranch")?.trim());
-  const currentStep = !hasIndexer
-    ? "indexing"
-    : !hasApiKey
-      ? "apiKey"
-      : !hasGithub
-        ? "github"
-        : !hasRepo
-          ? "repo"
-          : !hasBaseBranch
-            ? "baseBranch"
-            : "ready";
+  const currentStep = !hasApiKey
+    ? "apiKey"
+    : !hasGithub
+      ? "github"
+      : !hasRepo
+        ? "repo"
+        : !hasBaseBranch
+          ? "baseBranch"
+          : "ready";
   return {
     hasApiKey,
     hasGithub,
     hasRepo,
     hasBaseBranch,
-    hasIndexer,
     currentStep,
-    isReady: hasIndexer && hasApiKey && hasGithub && hasRepo && hasBaseBranch,
+    isReady: hasApiKey && hasGithub && hasRepo && hasBaseBranch,
   };
 }
 
@@ -1729,13 +1685,6 @@ function toUserErrorMessage(error: unknown): string {
     return "GitHub login is required. Click 'Sign In to GitHub' to continue.";
   }
 
-  if (raw.includes("Qdrant binary not found")) {
-    return (
-      "Qdrant is not configured. Set llmPrAssistant.qdrantPath to a local " +
-      "qdrant binary, then try again."
-    );
-  }
-
   if (raw.includes("Missing repository")) {
     return "Repository is missing. Enter it as owner/repo.";
   }
@@ -1785,71 +1734,5 @@ function toUserErrorMessage(error: unknown): string {
   }
 
   return raw || "Something went wrong. Please try again.";
-}
-
-async function getQdrantConfig(
-  context: vscode.ExtensionContext
-): Promise<{
-  binaryPath: string;
-  configPath?: string;
-  host: string;
-  port: number;
-  dataDir?: string;
-}> {
-  const config = vscode.workspace.getConfiguration("llmPrAssistant");
-  const binaryPath = await resolveQdrantBinaryPath(context);
-  const configPath = config.get<string>("qdrantConfigPath")?.trim() ?? "";
-  const host = config.get<string>("qdrantHost")?.trim() ?? "127.0.0.1";
-  const port = Number(config.get<number>("qdrantPort") ?? 6333);
-  const dataDir = config.get<string>("qdrantDataDir")?.trim() ?? "";
-
-  if (!binaryPath) {
-    throw new Error("Qdrant binary not found");
-  }
-
-  return {
-    binaryPath,
-    configPath: configPath || undefined,
-    host,
-    port,
-    dataDir: dataDir || undefined,
-  };
-}
-
-async function startIndexerIfConfigured(
-  context: vscode.ExtensionContext
-): Promise<void> {
-  const binaryPath = await resolveQdrantBinaryPath(context);
-  if (!binaryPath) {
-    return;
-  }
-  if (getQdrantStatus() === "running") {
-    return;
-  }
-  try {
-    const cfg = await getQdrantConfig(context);
-    await startQdrant(cfg);
-  } catch {
-    // Silent; status UI will show indexing/disabled state.
-  }
-}
-
-async function resolveQdrantBinaryPath(
-  context: vscode.ExtensionContext
-): Promise<string> {
-  const config = vscode.workspace.getConfiguration("llmPrAssistant");
-  const configured = config.get<string>("qdrantPath")?.trim() ?? "";
-  if (configured) {
-    return configured;
-  }
-  const cached =
-    context.globalState.get<string>("llmPrAssistant.qdrantPath") ?? "";
-  if (cached) {
-    return cached;
-  }
-  const installRoot = path.join(context.globalStorageUri.fsPath, "qdrant");
-  const downloaded = await ensureQdrantBinary(installRoot);
-  await context.globalState.update("llmPrAssistant.qdrantPath", downloaded);
-  return downloaded;
 }
 
