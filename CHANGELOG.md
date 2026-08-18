@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- Upgrade `@anthropic-ai/sdk` from 0.28 to 0.117 (current).
+- Stream Claude's responses instead of waiting silently: progress now appears in
+  the chat panel and output channel as it's generated. Response token limits were
+  also raised, fixing truncation on larger patches.
+- Use structured outputs (JSON schema) for plan generation, removing a class of
+  plan-parsing failures.
+- Add prompt caching for repeat calls against the same repo, with cache usage
+  logged to the output channel.
+- Add an `llmPrAssistant.effort` setting (reasoning effort for Claude calls,
+  default `high`); model listing now uses the SDK's own `models.list()`; refusals
+  from the model now show a friendly error instead of a generic failure.
+- Show a diff view with Apply/Cancel before any change is committed or pushed —
+  changes are never pushed without an explicit review step.
+- Replace the regex-based patch-apply fallback chain with a tool-driven loop: the
+  model reads and writes files directly (capped at 5 iterations) instead of
+  generating diffs for a chain of apply/repair fallbacks to chew on. This means
+  fewer failed generations overall.
+- Rank tracked files by relevance to the prompt and include the most relevant
+  ones' content as context, instead of relying on file listing + README alone.
+  This should improve generations for prompts that name a specific area of code.
+- Remove the local Qdrant sidecar indexer. It only ever gated the onboarding
+  wizard behind a forced binary download and was never queried for anything —
+  removing it means one less required install before first use.
+- Move the GitHub token to secure storage automatically on activation if it was
+  previously pasted into settings (a warning is now shown in Settings UI
+  discouraging that path in favor of "Sign In to GitHub"). The token is no longer
+  ever written to a file inside the working repository during a push.
 - Remove the `llmPrAssistant.llmProvider` and `llmPrAssistant.gitProvider` settings.
   Neither was ever read by the extension (Claude and GitHub are the only providers
   implemented), so both were no-ops regardless of what was selected.
