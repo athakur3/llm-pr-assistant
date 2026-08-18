@@ -1,5 +1,6 @@
 # LLM PR Assistant
 
+[![CI](https://github.com/athakur3/llm-pr-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/athakur3/llm-pr-assistant/actions/workflows/ci.yml)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/AkshanshThakur.llm-pr-assistant?label=VS%20Code%20Marketplace)
 [![Open VSX](https://img.shields.io/open-vsx/v/athakur3/llm-pr-assistant?label=Open%20VSX)](https://open-vsx.org/extension/athakur3/llm-pr-assistant)
 

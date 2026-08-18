@@ -9,6 +9,7 @@ docs/**
 CONTRIBUTING.md
 node_modules/.cache/**
 **/.git/**
+.github/**
 **/.vscode/**
 **/src/**
 **/out/**/*.map

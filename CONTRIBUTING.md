@@ -33,9 +33,10 @@ npm test
 
 Unit tests live in `tests/` and run on Node's built-in test runner with native
 TypeScript type stripping — no test framework dependency. This needs Node 23.6+
-(Node 24 recommended). The pure logic under test lives in `src/patch.ts`,
-`src/prompt.ts`, and `src/git.ts`; keep new pure helpers in those modules so
-they stay testable without a VS Code host.
+(Node 24 recommended). The pure logic under test lives in `src/prompt.ts`,
+`src/git.ts`, `src/relevance.ts`, `src/diffPreview.ts`, `src/progress.ts`, and
+`src/llm/tools.ts`; keep new pure helpers in modules like these so they stay
+testable without a VS Code host.
 
 ## Build and package
 
@@ -43,6 +44,21 @@ they stay testable without a VS Code host.
 npm run build     # production bundle -> dist/extension.js (minified)
 npm run package   # produces llm-pr-assistant-<version>.vsix
 ```
+
+## CI
+
+`.github/workflows/ci.yml` runs the same four checks on every push and pull
+request, in the same order:
+
+```bash
+npm test
+npm run typecheck
+npm run build
+npx vsce package
+```
+
+Keep them green locally before pushing — CI is a backstop, not the first place
+a break should show up.
 
 ## Publish
 
