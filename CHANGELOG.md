@@ -44,6 +44,11 @@
   different causes (malformed response, a response that wasn't a list of steps,
   an empty plan, and a plan whose steps all lacked a title or instruction); each
   now reports its own cause and its own suggested next step.
+- Rewrite the README and usage docs to match what the extension actually does.
+  The feature list had not kept up with the last several releases, and the
+  command list in `docs/usage.md` was missing "Generate PR from Prompt" — the
+  extension's main command — along with "Set Anthropic API Key" and the
+  `llmPrAssistant.effort` setting.
 
 ## 0.0.7
 
