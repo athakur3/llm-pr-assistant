@@ -1,4 +1,3 @@
-import * as https from "node:https";
 import * as path from "node:path";
 import { URLSearchParams } from "node:url";
 import * as vscode from "vscode";
@@ -26,7 +25,13 @@ import {
 } from "./prompt";
 import { formatCacheUsage, formatCharCount } from "./progress";
 import { createPullRequest } from "./github";
-import { appError, toUserErrorMessage } from "./errors";
+import {
+  appError,
+  appErrorToken,
+  toLogDetail,
+  toUserErrorMessage,
+} from "./errors";
+import { postForm } from "./http";
 import {
   CacheUsage,
   ClaudeEffort,
@@ -81,6 +86,7 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (error) {
         const message = toUserErrorMessage(error);
         logStep(output, `Error: ${message}`);
+        logStep(output, `Cause: ${toLogDetail(error)}`);
         vscode.window.showErrorMessage(message);
       }
     }
@@ -112,6 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
         await loginWithGithubDeviceFlow(context, GITHUB_DEVICE_CLIENT_ID);
         vscode.window.showInformationMessage("GitHub login completed. PR powers unlocked.");
       } catch (error) {
+        logStep(output, `Error: ${toLogDetail(error)}`);
         vscode.window.showErrorMessage(toUserErrorMessage(error));
       }
     }
@@ -464,46 +471,6 @@ async function pollForGithubToken(
   }
 
   throw appError("github-login-timeout");
-}
-
-async function postForm(
-  url: string,
-  params: Record<string, string>
-): Promise<Record<string, unknown>> {
-  const body = new URLSearchParams(params).toString();
-
-  const responseText = await new Promise<string>((resolve, reject) => {
-    const request = https.request(
-      url,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-          "Content-Length": Buffer.byteLength(body),
-        },
-      },
-      (response) => {
-        let data = "";
-        response.on("data", (chunk) => {
-          data += chunk;
-        });
-        response.on("end", () => {
-          resolve(data);
-        });
-      }
-    );
-
-    request.on("error", reject);
-    request.write(body);
-    request.end();
-  });
-
-  try {
-    return JSON.parse(responseText);
-  } catch {
-    throw new Error("Unexpected response from GitHub.");
-  }
 }
 
 function delay(ms: number): Promise<void> {
@@ -892,7 +859,7 @@ async function runPlanExecute(params: {
 
 function shouldFallbackToPlan(error: unknown): boolean {
   const raw = error instanceof Error ? error.message : String(error ?? "");
-  return raw.includes("Model made no file changes");
+  return raw.includes(appErrorToken("no-file-changes"));
 }
 
 async function selectClaudeModel(

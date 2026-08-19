@@ -25,7 +25,12 @@ export type AppErrorCode =
   | "refusal"
   | "github-device-expired"
   | "github-access-denied"
-  | "github-login-timeout";
+  | "github-login-timeout"
+  | "github-http-auth"
+  | "github-http-rate-limit"
+  | "github-http-client"
+  | "github-http-server"
+  | "github-bad-response";
 
 /** What the thrown Error says — for logs and for anyone reading a stack. */
 const APP_ERROR_CAUSE: Record<AppErrorCode, string> = {
@@ -39,6 +44,11 @@ const APP_ERROR_CAUSE: Record<AppErrorCode, string> = {
   "github-device-expired": "GitHub device code expired.",
   "github-access-denied": "GitHub access denied.",
   "github-login-timeout": "GitHub login timed out.",
+  "github-http-auth": "GitHub rejected the request as unauthorized.",
+  "github-http-rate-limit": "GitHub rate-limited the request.",
+  "github-http-client": "GitHub rejected the request.",
+  "github-http-server": "GitHub returned a server error.",
+  "github-bad-response": "Unexpected response from GitHub.",
 };
 
 /** What the user is told, and what to do about it. */
@@ -63,9 +73,76 @@ const APP_ERROR_ADVICE: Record<AppErrorCode, string> = {
   "github-access-denied":
     "GitHub access was denied. Please approve the login to continue.",
   "github-login-timeout": "GitHub login timed out. Please try again.",
+  "github-http-auth":
+    "GitHub refused the sign-in request as unauthorized. Sign out of the " +
+    "assistant, sign in again, and check the output channel for the exact " +
+    "status if it keeps happening.",
+  "github-http-rate-limit":
+    "GitHub is rate-limiting sign-in requests. Wait a minute, then try " +
+    "signing in again.",
+  "github-http-client":
+    "GitHub rejected the sign-in request. The output channel has the exact " +
+    "status and response — please include it if you report this.",
+  "github-http-server":
+    "GitHub had a server-side error. This is usually temporary — check " +
+    "githubstatus.com and try again in a few minutes.",
+  "github-bad-response":
+    "GitHub sent a response this extension could not read. The output " +
+    "channel has the status and a short excerpt of what arrived.",
 };
 
 const TOKEN_PATTERN = /\s*\(llmpr:[a-z-]+\)/g;
+
+/**
+ * Anything shaped like a credential, redacted before error text is written to
+ * the output channel. Response bodies and git's stderr are not ours to trust
+ * with a log line: a remote URL of the form `https://user:token@github.com/...`
+ * puts a live token in a message we would otherwise print verbatim.
+ */
+const SECRET_PATTERNS: RegExp[] = [
+  /gh[pousr]_[A-Za-z0-9]{16,}/g,
+  /\b(access_token|refresh_token|client_secret)=[^&\s"]+/gi,
+  /"(access_token|refresh_token|client_secret)"\s*:\s*"[^"]*"/gi,
+  /(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi,
+];
+
+export function redactSecrets(text: string): string {
+  return SECRET_PATTERNS.reduce(
+    (acc, pattern) =>
+      acc.replace(pattern, (match, ...groups) => {
+        const scheme = typeof groups[0] === "string" && /^https?:\/\/$/i.test(groups[0])
+          ? groups[0]
+          : null;
+        if (scheme) {
+          return `${scheme}[redacted]@`;
+        }
+        const separator = match.includes("=")
+          ? "="
+          : match.includes('":')
+            ? '":'
+            : null;
+        if (!separator) {
+          return "[redacted]";
+        }
+        const [name] = match.split(separator);
+        return separator === "="
+          ? `${name}=[redacted]`
+          : `${name}": "[redacted]"`;
+      }),
+    text
+  );
+}
+
+/**
+ * What belongs in the output channel when an error is shown to a user: the
+ * message we actually threw — including an `appError` detail such as an HTTP
+ * status — minus anything that looks like a credential. The user sees
+ * `toUserErrorMessage`; a log line gets this.
+ */
+export function toLogDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  return redactSecrets(raw).trim();
+}
 
 export function appErrorToken(code: AppErrorCode): string {
   return `(llmpr:${code})`;
@@ -85,8 +162,18 @@ export function appError(
   );
 }
 
+/**
+ * Every code, derived from the advice map rather than repeated. `Record<
+ * AppErrorCode, string>` already forces the maps to cover the union, so
+ * deriving the list here means a new code cannot be added without both its
+ * advice and its test coverage following it.
+ */
+export const ALL_APP_ERROR_CODES = Object.keys(
+  APP_ERROR_ADVICE
+) as AppErrorCode[];
+
 function findAppErrorCode(raw: string): AppErrorCode | null {
-  for (const code of Object.keys(APP_ERROR_ADVICE) as AppErrorCode[]) {
+  for (const code of ALL_APP_ERROR_CODES) {
     if (raw.includes(appErrorToken(code))) {
       return code;
     }

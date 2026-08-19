@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ALL_APP_ERROR_CODES,
   appError,
   appErrorToken,
   toUserErrorMessage,
@@ -8,22 +9,11 @@ import {
 } from "../src/errors.ts";
 import { planFailureMessage } from "../src/prompt.ts";
 
-const ALL_CODES: AppErrorCode[] = [
-  "dirty-worktree",
-  "missing-api-key",
-  "missing-github-token",
-  "missing-repo",
-  "no-file-changes",
-  "changes-declined",
-  "refusal",
-  "github-device-expired",
-  "github-access-denied",
-  "github-login-timeout",
-];
 
 test("every code round-trips from throw site to distinct user advice", () => {
   const seen = new Map<string, AppErrorCode>();
-  for (const code of ALL_CODES) {
+  assert.ok(ALL_APP_ERROR_CODES.length >= 15, "code list looks truncated");
+  for (const code of ALL_APP_ERROR_CODES) {
     const advice = toUserErrorMessage(appError(code));
     assert.ok(advice, `${code} produced no advice`);
     assert.ok(
