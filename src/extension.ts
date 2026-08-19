@@ -19,7 +19,12 @@ import {
   runGit,
 } from "./git";
 import { buildDiffPreviewSummary, listChangedFiles } from "./diffPreview";
-import { classifyTaskSizing, extractRequestedCount } from "./prompt";
+import {
+  classifyTaskSizing,
+  extractRequestedCount,
+  planFailureAdvice,
+  PLAN_FAILURE_PREFIX,
+} from "./prompt";
 import { formatCacheUsage, formatCharCount } from "./progress";
 import { createPullRequest } from "./github";
 import {
@@ -601,7 +606,9 @@ async function runGeneratePrompt(
       logStep(output, "Collecting code context");
       notify?.("Reading the codebase...");
       progress.report({ message: "Collecting code context" });
-      let contextText = await buildContext(repoRoot, prompt);
+      let contextText = await buildContext(repoRoot, prompt, (message) =>
+        logStep(output, message)
+      );
 
       const requestedCount = extractRequestedCount(prompt.toLowerCase());
       const executionTier = classifyTaskSizing(prompt, contextText);
@@ -844,7 +851,7 @@ async function runPlanExecute(params: {
     onUsage: makeUsageLogger(output, "Planning"),
   });
   if (!plan.length) {
-    throw new Error("Failed to generate execution plan.");
+    throw new Error(`${PLAN_FAILURE_PREFIX}.`);
   }
   logStep(
     output,
@@ -877,7 +884,9 @@ async function runPlanExecute(params: {
     });
     logStep(output, "Refreshing context after step");
     notify?.("Refreshing context...");
-    contextText = await buildContext(repoRoot, prompt);
+    contextText = await buildContext(repoRoot, prompt, (message) =>
+      logStep(output, message)
+    );
   }
 }
 
@@ -1732,8 +1741,9 @@ function toUserErrorMessage(error: unknown): string {
     return "Repository is missing. Enter it as owner/repo.";
   }
 
-  if (raw.includes("Failed to generate execution plan")) {
-    return "Could not plan the task. Try a smaller scope or run again.";
+  const planAdvice = planFailureAdvice(raw);
+  if (planAdvice) {
+    return planAdvice;
   }
 
   if (raw.includes("Model made no file changes")) {

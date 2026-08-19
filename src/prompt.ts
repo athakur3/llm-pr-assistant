@@ -148,7 +148,47 @@ export function levenshteinDistance(a: string, b: string): number {
   return prev[b.length];
 }
 
-export function parsePlanJson(raw: string): PlanStep[] {
+/**
+ * Why a plan response yielded no usable steps. These four causes used to
+ * collapse into one empty array and one message ("Failed to generate execution
+ * plan."), which told nobody whether the model returned garbage, no steps, or
+ * steps that were all discarded for missing fields.
+ */
+export type PlanParseFailure =
+  | "unparseable"
+  | "not-a-list"
+  | "empty"
+  | "steps-incomplete";
+
+export type PlanParseResult =
+  | { ok: true; steps: PlanStep[] }
+  | { ok: false; reason: PlanParseFailure };
+
+export const PLAN_FAILURE_PREFIX = "Failed to generate execution plan";
+
+const PLAN_FAILURE_CAUSE: Record<PlanParseFailure, string> = {
+  unparseable: "the response was not valid JSON",
+  "not-a-list": "the response was not a list of steps",
+  empty: "the model returned a plan with no steps",
+  "steps-incomplete": "every step was missing a title or an instruction",
+};
+
+const PLAN_FAILURE_ADVICE: Record<PlanParseFailure, string> = {
+  unparseable:
+    "Claude's plan came back malformed and could not be read. Run again, " +
+    "or try a smaller scope.",
+  "not-a-list":
+    "Claude's plan was not a list of steps. Run again, or try a smaller " +
+    "scope.",
+  empty:
+    "Claude returned a plan with no steps. Describe the change in more " +
+    "detail and run again.",
+  "steps-incomplete":
+    "Claude's plan steps were missing titles or instructions. Run again, " +
+    "or try a smaller scope.",
+};
+
+export function parsePlan(raw: string): PlanParseResult {
   const cleaned = raw.replace(/```[\s\S]*?```/g, (match) =>
     match.replace(/```/g, "")
   );
@@ -157,18 +197,53 @@ export function parsePlanJson(raw: string): PlanStep[] {
   const candidate =
     start >= 0 && end >= start ? cleaned.slice(start, end + 1) : cleaned;
 
+  let data: unknown;
   try {
-    const data = JSON.parse(candidate);
-    if (!Array.isArray(data)) {
-      return [];
-    }
-    return data
-      .map((item) => ({
-        title: String(item?.title ?? "").trim(),
-        instruction: String(item?.instruction ?? "").trim(),
-      }))
-      .filter((item) => item.title && item.instruction);
+    data = JSON.parse(candidate);
   } catch {
-    return [];
+    return { ok: false, reason: "unparseable" };
   }
+
+  if (!Array.isArray(data)) {
+    return { ok: false, reason: "not-a-list" };
+  }
+  if (data.length === 0) {
+    return { ok: false, reason: "empty" };
+  }
+
+  const steps = data
+    .map((item) => ({
+      title: String(item?.title ?? "").trim(),
+      instruction: String(item?.instruction ?? "").trim(),
+    }))
+    .filter((item) => item.title && item.instruction);
+
+  if (steps.length === 0) {
+    return { ok: false, reason: "steps-incomplete" };
+  }
+  return { ok: true, steps };
+}
+
+/**
+ * The thrown message: prefixed so older matching still works, and carrying a
+ * stable "(reason)" token so the cause survives the trip through Error.message.
+ */
+export function planFailureMessage(reason: PlanParseFailure): string {
+  return `${PLAN_FAILURE_PREFIX} (${reason}): ${PLAN_FAILURE_CAUSE[reason]}.`;
+}
+
+/**
+ * Maps a thrown plan-failure message back to user-facing advice, or null if
+ * this is not a plan failure at all.
+ */
+export function planFailureAdvice(rawErrorMessage: string): string | null {
+  if (!rawErrorMessage.includes(PLAN_FAILURE_PREFIX)) {
+    return null;
+  }
+  for (const reason of Object.keys(PLAN_FAILURE_ADVICE) as PlanParseFailure[]) {
+    if (rawErrorMessage.includes(`(${reason})`)) {
+      return PLAN_FAILURE_ADVICE[reason];
+    }
+  }
+  return "Could not plan the task. Try a smaller scope or run again.";
 }

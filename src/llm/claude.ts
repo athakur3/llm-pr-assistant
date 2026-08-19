@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { parsePlanJson, PlanStep } from "../prompt";
+import { parsePlan, planFailureMessage, PlanStep } from "../prompt";
 import { createTickGate } from "../progress";
 
 const STREAM_TICK_THRESHOLD_CHARS = 400;
@@ -118,11 +118,11 @@ export async function generatePlanWithClaude({
     .join("")
     .trim();
 
-  const parsed = parsePlanJson(text);
-  if (!parsed.length) {
-    throw new Error("Failed to generate execution plan.");
+  const parsed = parsePlan(text);
+  if (!parsed.ok) {
+    throw new Error(planFailureMessage(parsed.reason));
   }
-  return parsed;
+  return parsed.steps;
 }
 
 export async function listClaudeModels(apiKey: string): Promise<string[]> {

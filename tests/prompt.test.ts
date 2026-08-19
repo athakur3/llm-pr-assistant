@@ -5,7 +5,9 @@ import {
   extractRequestedCount,
   findClosestNumberWord,
   levenshteinDistance,
-  parsePlanJson,
+  parsePlan,
+  planFailureAdvice,
+  planFailureMessage,
 } from "../src/prompt.ts";
 
 test("levenshteinDistance handles equal, empty, and mixed strings", () => {
@@ -51,33 +53,84 @@ test("classifyTaskSizing returns TIER_3 for long high-count prompts", () => {
   assert.equal(classifyTaskSizing(prompt, "ctx"), "TIER_3");
 });
 
-test("parsePlanJson parses a plain JSON array of steps", () => {
+test("parsePlan parses a plain JSON array of steps", () => {
   const raw = '[{"title": "Step 1", "instruction": "Do the thing"}]';
-  assert.deepEqual(parsePlanJson(raw), [
-    { title: "Step 1", instruction: "Do the thing" },
-  ]);
+  assert.deepEqual(parsePlan(raw), {
+    ok: true,
+    steps: [{ title: "Step 1", instruction: "Do the thing" }],
+  });
 });
 
-test("parsePlanJson unwraps fenced JSON and surrounding prose", () => {
+test("parsePlan unwraps fenced JSON and surrounding prose", () => {
   const raw =
     'Here you go:\n```json\n[{"title": "T", "instruction": "I"}]\n```\nDone.';
-  assert.deepEqual(parsePlanJson(raw), [{ title: "T", instruction: "I" }]);
+  assert.deepEqual(parsePlan(raw), {
+    ok: true,
+    steps: [{ title: "T", instruction: "I" }],
+  });
 });
 
-test("parsePlanJson drops steps missing a title or instruction", () => {
+test("parsePlan drops steps missing a title or instruction", () => {
   const raw =
     '[{"title": "ok", "instruction": "ok"}, {"title": "", "instruction": "x"}, {"title": "y"}]';
-  assert.deepEqual(parsePlanJson(raw), [{ title: "ok", instruction: "ok" }]);
+  assert.deepEqual(parsePlan(raw), {
+    ok: true,
+    steps: [{ title: "ok", instruction: "ok" }],
+  });
 });
 
-test("parsePlanJson returns [] for non-arrays and invalid JSON", () => {
-  assert.deepEqual(parsePlanJson('{"title": "not an array"}'), []);
-  assert.deepEqual(parsePlanJson("total garbage"), []);
-});
-
-test("parsePlanJson unwraps a steps array nested in a JSON object", () => {
+test("parsePlan unwraps a steps array nested in a JSON object", () => {
   const raw = '{"steps": [{"title": "Step 1", "instruction": "Do the thing"}]}';
-  assert.deepEqual(parsePlanJson(raw), [
-    { title: "Step 1", instruction: "Do the thing" },
-  ]);
+  assert.deepEqual(parsePlan(raw), {
+    ok: true,
+    steps: [{ title: "Step 1", instruction: "Do the thing" }],
+  });
+});
+
+test("parsePlan names each of the four ways a plan comes back unusable", () => {
+  assert.deepEqual(parsePlan("total garbage"), {
+    ok: false,
+    reason: "unparseable",
+  });
+  assert.deepEqual(parsePlan('{"title": "not an array"}'), {
+    ok: false,
+    reason: "not-a-list",
+  });
+  assert.deepEqual(parsePlan("[]"), { ok: false, reason: "empty" });
+  assert.deepEqual(parsePlan('[{"title": "", "instruction": "i"}]'), {
+    ok: false,
+    reason: "steps-incomplete",
+  });
+});
+
+test("parsePlan returns the steps when the plan is usable", () => {
+  assert.deepEqual(parsePlan('[{"title": "T", "instruction": "I"}]'), {
+    ok: true,
+    steps: [{ title: "T", instruction: "I" }],
+  });
+});
+
+test("planFailureMessage carries a machine-readable cause token", () => {
+  const message = planFailureMessage("steps-incomplete");
+  assert.ok(message.startsWith("Failed to generate execution plan"));
+  assert.ok(message.includes("(steps-incomplete)"));
+});
+
+test("planFailureAdvice gives distinct advice per cause", () => {
+  const advice = (["unparseable", "not-a-list", "empty", "steps-incomplete"] as const).map(
+    (reason) => planFailureAdvice(planFailureMessage(reason))
+  );
+  assert.ok(advice.every((entry) => typeof entry === "string" && entry.length > 0));
+  assert.equal(new Set(advice).size, 4);
+});
+
+test("planFailureAdvice falls back for a plan failure with no cause token", () => {
+  assert.equal(
+    planFailureAdvice("Failed to generate execution plan."),
+    "Could not plan the task. Try a smaller scope or run again."
+  );
+});
+
+test("planFailureAdvice ignores errors that are not plan failures", () => {
+  assert.equal(planFailureAdvice("Working tree is not clean"), null);
 });

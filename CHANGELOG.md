@@ -36,6 +36,14 @@
   package was shipping a full copy of `node_modules` that the bundled extension
   never loaded at runtime, so installs and updates now download less than half as
   much.
+- Stop reporting a repository that could not be read as an empty repository. If
+  listing the repo's files fails, the underlying git error is now written to the
+  output channel and the model is told the listing is unavailable, instead of
+  being handed "(no files)" as though the repo were genuinely empty.
+- Say why planning failed. "Could not plan the task" previously covered four
+  different causes (malformed response, a response that wasn't a list of steps,
+  an empty plan, and a plan whose steps all lacked a title or instruction); each
+  now reports its own cause and its own suggested next step.
 
 ## 0.0.7
 
