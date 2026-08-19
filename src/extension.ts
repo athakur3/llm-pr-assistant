@@ -22,11 +22,11 @@ import { buildDiffPreviewSummary, listChangedFiles } from "./diffPreview";
 import {
   classifyTaskSizing,
   extractRequestedCount,
-  planFailureAdvice,
   PLAN_FAILURE_PREFIX,
 } from "./prompt";
 import { formatCacheUsage, formatCharCount } from "./progress";
 import { createPullRequest } from "./github";
+import { appError, toUserErrorMessage } from "./errors";
 import {
   CacheUsage,
   ClaudeEffort,
@@ -453,17 +453,17 @@ async function pollForGithubToken(
     }
 
     if (error === "expired_token") {
-      throw new Error("GitHub device code expired. Please try again.");
+      throw appError("github-device-expired");
     }
 
     if (error === "access_denied") {
-      throw new Error("GitHub access denied.");
+      throw appError("github-access-denied");
     }
 
     throw new Error(`GitHub login failed: ${error}`);
   }
 
-  throw new Error("GitHub login timed out.");
+  throw appError("github-login-timeout");
 }
 
 async function postForm(
@@ -581,13 +581,13 @@ async function runGeneratePrompt(
         config.get<string>("baseBranch")?.trim() ?? "main";
 
       if (!apiKey) {
-        throw new Error("Missing Anthropic API key.");
+        throw appError("missing-api-key");
       }
       if (!githubToken) {
-        throw new Error("Missing GitHub token.");
+        throw appError("missing-github-token");
       }
       if (!repoSlug || !repoSlug.includes("/")) {
-        throw new Error("Missing repository.");
+        throw appError("missing-repo");
       }
 
       logStep(output, "Checking git status");
@@ -686,7 +686,7 @@ async function runGeneratePrompt(
           notify?.("Changes declined. Discarding...");
           await discardBranchChanges(repoRoot);
           await abandonBranch(repoRoot, originalBranch, branchName);
-          throw new Error("Changes were not approved.");
+          throw appError("changes-declined");
         }
       }
 
@@ -805,7 +805,7 @@ async function applyPatchFromClaude(params: {
   const afterChanged = await listChangedFiles(repoRoot);
   const madeChanges = afterChanged.some((file) => !beforeChanged.has(file));
   if (!madeChanges && !allowEmpty) {
-    throw new Error("Model made no file changes.");
+    throw appError("no-file-changes");
   }
 }
 
@@ -900,7 +900,7 @@ async function selectClaudeModel(
 ): Promise<void> {
   const apiKey = await getApiKey(context);
   if (!apiKey) {
-    throw new Error("Missing Anthropic API key.");
+    throw appError("missing-api-key");
   }
 
   const models = await listClaudeModels(apiKey);
@@ -1710,82 +1710,3 @@ async function buildChangeSummary(repoRoot: string): Promise<string> {
     return "";
   }
 }
-
-function toUserErrorMessage(error: unknown): string {
-  const raw =
-    error instanceof Error ? error.message : String(error ?? "");
-
-  if (raw.includes("model:") || raw.includes("not_found_error")) {
-    return (
-      "Claude model not available. Set a valid model in settings " +
-      "(llmPrAssistant.claudeModel) or use 'claude-opus-5'."
-    );
-  }
-
-  if (raw.includes("Working tree is not clean")) {
-    return (
-      "Your repo has uncommitted changes. Commit, stash, or clean changes " +
-      "before running the assistant."
-    );
-  }
-
-  if (raw.includes("Missing Anthropic API key")) {
-    return "Anthropic API key is missing. Add it in the setup step.";
-  }
-
-  if (raw.includes("Missing GitHub token")) {
-    return "GitHub login is required. Click 'Sign In to GitHub' to continue.";
-  }
-
-  if (raw.includes("Missing repository")) {
-    return "Repository is missing. Enter it as owner/repo.";
-  }
-
-  const planAdvice = planFailureAdvice(raw);
-  if (planAdvice) {
-    return planAdvice;
-  }
-
-  if (raw.includes("Model made no file changes")) {
-    return (
-      "The model didn't make any file changes. Try rephrasing the request " +
-      "or narrowing the scope."
-    );
-  }
-
-  if (raw.includes("Changes were not approved")) {
-    return (
-      "Changes were declined in the diff preview. Nothing was committed, " +
-      "pushed, or opened as a PR."
-    );
-  }
-
-  if (raw.includes("declined to respond to this request (refusal)")) {
-    return (
-      "Claude declined to respond to this request. Try rephrasing or " +
-      "narrowing the prompt."
-    );
-  }
-
-  if (raw.includes("GitHub device code expired")) {
-    return "GitHub login expired. Please sign in again.";
-  }
-
-  if (raw.includes("GitHub access denied")) {
-    return "GitHub access was denied. Please approve the login to continue.";
-  }
-
-  if (raw.includes("GitHub login timed out")) {
-    return "GitHub login timed out. Please try again.";
-  }
-
-  if (raw.includes("Permission to") && raw.includes("denied")) {
-    return (
-      "Git push failed due to permission issues. Make sure the GitHub " +
-      "account you signed in with has access to the repo, then try again."
-    );
-  }
-
-  return raw || "Something went wrong. Please try again.";
-}
-

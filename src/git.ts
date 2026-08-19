@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import { appError } from "./errors.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -71,7 +72,7 @@ export async function ensureClean(repoRoot: string): Promise<void> {
     .filter(Boolean)
     .filter((line) => !isIgnoredDirtyPath(line));
   if (dirty.length > 0) {
-    throw new Error("Working tree is not clean. Commit or stash changes first.");
+    throw appError("dirty-worktree");
   }
 }
 

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { parsePlan, planFailureMessage, PlanStep } from "../prompt";
 import { createTickGate } from "../progress";
+import { appError } from "../errors.ts";
 
 const STREAM_TICK_THRESHOLD_CHARS = 400;
 
@@ -174,10 +175,7 @@ async function streamMessage(
 
   if (response.stop_reason === "refusal") {
     const explanation = response.stop_details?.explanation;
-    throw new Error(
-      "Claude declined to respond to this request (refusal)." +
-        (explanation ? ` ${explanation}` : "")
-    );
+    throw appError("refusal", explanation);
   }
 
   if (onUsage) {
