@@ -2,7 +2,7 @@
   "name": "llm-pr-assistant",
   "displayName": "LLM PR Assistant",
   "description": "Generate code changes from a prompt, commit, and open a PR.",
-  "version": "0.0.7",
+  "version": "0.1.0",
   "publisher": "athakur3",
   "icon": "images/icon.png",
   "repository": {

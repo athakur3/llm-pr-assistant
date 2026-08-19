@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-08-19
 
 - Upgrade `@anthropic-ai/sdk` from 0.28 to 0.117 (current).
 - Stream Claude's responses instead of waiting silently: progress now appears in
