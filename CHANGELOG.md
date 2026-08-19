@@ -32,6 +32,10 @@
 - Remove the `llmPrAssistant.llmProvider` and `llmPrAssistant.gitProvider` settings.
   Neither was ever read by the extension (Claude and GitHub are the only providers
   implemented), so both were no-ops regardless of what was selected.
+- Shrink the published extension from 2.0 MB to 0.9 MB (1065 files down to 7). The
+  package was shipping a full copy of `node_modules` that the bundled extension
+  never loaded at runtime, so installs and updates now download less than half as
+  much.
 
 ## 0.0.7
 

@@ -1,13 +1,13 @@
 **/*.map
 **/.cache/**
 **/*.vsix
+node_modules/**
 out/**
 src/**
 tests/**
 scripts/**
 docs/**
 CONTRIBUTING.md
-node_modules/.cache/**
 **/.git/**
 .github/**
 **/.vscode/**

@@ -45,6 +45,14 @@ npm run build     # production bundle -> dist/extension.js (minified)
 npm run package   # produces llm-pr-assistant-<version>.vsix
 ```
 
+The VSIX ships `dist/extension.js` and no `node_modules` — esbuild bundles both
+runtime dependencies into it, and `vscode` is provided by the editor. `npm run
+build` fails if the bundle ends up referencing anything else (an unbundled bare
+import, or a computed `require()` that can't be checked statically), because that
+would resolve on your machine and break on a user's. If you add a dependency
+esbuild genuinely cannot bundle, stop excluding `node_modules` in `.vscodeignore`
+in the same change.
+
 ## CI
 
 `.github/workflows/ci.yml` runs the same four checks on every push and pull
